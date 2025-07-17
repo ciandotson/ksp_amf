@@ -128,7 +128,7 @@ R1.flags <- paste("-g", for.primer) # tells cutadapt the sequence of the forward
 
 # Actual cutadapt command that loops through all files #
 for(i in seq_along(for.fp)){
-  system2(cutadapt, args = c(R1.flags, "-n", 2, "-o", forcut.fp[i], forfilt.fp[i]))
+  system2(paste0("cutadapt ", R1.flags, " -n ", 2, " -o ", forcut.fp[i], " ", forfilt.fp[i]))
 }
 
 ## Checking to make sure all of the primers were trimmed ##
