@@ -147,7 +147,7 @@ for(i in 1:nrow(for.fp)){
 # Make the directory and file paths for the final filtering of the reads #
 path.filt <- "./reads/filtered"
 if(!dir.exists(path.filt)) dir.create(path.filt)
-forpost.fp <- file.path("./reads/filtered/", paste0(sample.names, '_F_filt.fastq.gz'))
+forpost.fp <- file.path("./reads/filtered", paste0(sample.names, '_F_filt.fastq.gz'))
 
 # Filter out reads that have any ambiguous base calls (maxN = 0) and reads with expected errors above 2 (maxEE = 2), while truncating reads to 200 bp (truncLen = 200, as described in Lekberg et al., 2023) or at first instance in which expected error is above 2 (truncQ = 2) # 
 postfilt.track <- filterAndTrim(forcut.fp, forpost.fp, maxN = 0, maxEE = 2, truncLen = 200,
