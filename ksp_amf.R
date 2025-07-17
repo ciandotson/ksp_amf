@@ -93,7 +93,7 @@ if(!dir.exists('./reads/filtN'))
 forfilt.fp <- file.path('./reads/filtN', paste0(sample.names, '_filtN_R1.fastq.gz'))
 
 # Perform the filtering with the only unqiue parameter being maxN = 0 #
-prefilt.track <- filterAndTrim(for.fp, forfilt.fp, rev.fp, revfilt.fp, maxN = 0, multithread = FALSE)
+prefilt.track <- filterAndTrim(for.fp, forfilt.fp, maxN = 0, multithread = FALSE)
 # The results are written directly to the new files we denoted in the last two commands, so nothing new needs to be saved #
 
 # To compare all of the orientations of our primers to the newly pre-filtered reads, we can make a function that lines up the orientations to these reads and tells us the number of hits #
