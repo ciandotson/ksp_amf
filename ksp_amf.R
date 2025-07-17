@@ -39,7 +39,7 @@ for_reads <- opt$forward
 
 if (!requireNamespace("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
-BiocManager::install("dada2", version = "3.18", force = TRUE)
+BiocManager::install("dada2", version = "3.21", force = TRUE)
 library(dada2); packageVersion('dada2')
 
 BiocManager::install("ShortRead")
