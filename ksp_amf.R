@@ -48,5 +48,21 @@ library(ShortRead); packageVersion('ShortRead')
 BiocManager::install("Biostrings")
 library(Biostrings); packageVersion('Biostrings')
 
-# Read in the metadata from the cloned repsoitory #
-all.met <- read.csv2(file = '~/new_ksp_amf/metadata/Fungal_Community_Soil_Samples_KSP.csv', sep = ',')
+# Read in the metadata from the cloned repository #
+all.met <- read.csv2(file = './metadata/Fungal_Community_Soil_Samples_KSP.csv', sep = ',')
+
+# The metadata is reorganized such that the samples are ordered based on the number of sample they are #
+rownames(all.met) <- all.met$Sample
+all.met$Order <- as.numeric(gsub("JW_", "", all.met$Number))
+all.met <- all.met[order(all.met$Order),]
+
+# Make sure input value from the command line outputs the file paths for the raw forward #
+for.fp <- for_reads
+list.files(for.fp)
+
+# As a sanity check, add the file paths to the metadata data.frame and make sure the filepaths align to the sample names #
+all.met$Forward <- for.fp
+sample.names <- rownames(all.met)
+
+save.image("./ksp_amf.RData")
+
