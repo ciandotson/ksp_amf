@@ -118,11 +118,7 @@ path.cut <- "./reads/ptrim"
 if(!dir.exists(path.cut)) dir.create(path.cut)
 forcut.fp <- file.path(path.cut, paste0(sample.names, '_ptrim_R1.fastq.gz'))
 
-# Take the reverse complement of the primers #
-for.rc <- dada2::rc(for.primer)
-
-# Estbalish the paramters for cutadapt #
-R1.flags <- paste("-g", for.primer) # tells cutadapt the sequence of the forward primer to cut #
+save.image("./ksp_amf.RData")
 
 # Actual cutadapt command that loops through all files #
 for(i in seq_along(for.fp)){
