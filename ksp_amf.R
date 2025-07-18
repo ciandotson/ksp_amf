@@ -122,7 +122,7 @@ save.image("./ksp_amf.RData")
 
 # Actual cutadapt command that loops through all files #
 for(i in seq_along(for.fp)){
-  system2(paste0("cutadapt -g ", for.primer, " -n 2 -o ", forcut.fp[i], " ", forfilt.fp[i]))
+  system(paste0("cutadapt -g ", for.primer, " -n 2 -o ", forcut.fp[i], " ", forfilt.fp[i]))
 }
 
 ## Checking to make sure all of the primers were trimmed ##
