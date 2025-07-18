@@ -47,20 +47,33 @@ library(ShortRead); packageVersion('ShortRead')
 library(Biostrings); packageVersion('Biostrings')
 
 # Read in the metadata from the cloned repository #
-all.met <- read.csv2(file = './metadata/Fungal_Community_Soil_Samples_KSP.csv', sep = ',')
+ksp.met <- read.csv2(file = './metadata/Fungal_Community_Soil_Samples_KSP.csv', sep = ',')
 
 # The metadata is reorganized such that the samples are ordered based on the number of sample they are #
-rownames(all.met) <- all.met$Sample
-all.met$Order <- as.numeric(gsub("JW_", "", all.met$Number))
-all.met <- all.met[order(all.met$Order),]
+rownames(ksp.met) <- ksp.met$Sample
+ksp.met$Order <- as.numeric(gsub("JW_", "", ksp.met$Number))
+ksp.met <- ksp.met[order(ksp.met$Order),]
+
+# Add data entries for site location and amount of innoculant #
+for(i in 1:nrow(ksp.met)){ 
+  ksp.met$Site[i] <- substr(ksp.met$Sample[i], 1,1)
+  if(substr(ksp.met$Sample[i], 2,2) == 'C'){
+    ksp.met$Treatment[i] <- 'Control'
+  }else{
+    ksp.met$Treatment[i] <- substr(ksp.met$Sample[i], 2,3) 
+  }
+}
+ksp.met$Treatment <- gsub('HI', 'High', ksp.met$Treatment)
+ksp.met$Treatment <- gsub('LO', 'Low', ksp.met$Treatment)
+ksp.met$Treatment <- gsub('yc', 'MycoBloom', ksp.met$Treatment)
 
 # Make sure input value from the command line outputs the file paths for the raw forward #
 for.fp <- for_reads
 list.files(for.fp)
 
 # As a sanity check, add the file paths to the metadata data.frame and make sure the filepaths align to the sample names #
-all.met$Forward <- for.fp
-sample.names <- rownames(all.met)
+ksp.met$Forward <- for.fp
+sample.names <- rownames(ksp.met)
 
 #### Trimming Primers Using cutadapt ####
 ## Though cutadapt is a bash (command line) tool, we can actually use bash tools directly from the R command line as both languages are Unix based ## 
@@ -121,8 +134,8 @@ forcut.fp <- file.path(path.cut, paste0(sample.names, '_ptrim_R1.fastq.gz'))
 save.image("./ksp_amf.RData")
 
 # Actual cutadapt command that loops through all files #
-for(i in seq_along(for.fp)){
-  system(paste0("cutadapt -g ", for.primer, " -n 2 -o ", forcut.fp[i], " ", forfilt.fp[i]))
+for(i in seq_along(list.files(for.fp))){
+  system(paste0("cutadapt -g ", for.primer, " -o ", forcut.fp[i], " ", forfilt.fp[i]))
 }
 
 ## Checking to make sure all of the primers were trimmed ##
@@ -185,10 +198,10 @@ library(phyloseq); packageVersion("phyloseq")
 library(dplyr); packageVersion('dplyr')
 
 # Here we actually make the phyloseq object (raw_ksp.ps) that contains the ASV table (nochim_ksp.st), taxonomy table (ksp.taxa), #
-# and metadata table (all.met) #
+# and metadata table (ksp.met) #
 raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
                        tax_table(ksp.taxa),
-                       sample_data(all.met))
+                       sample_data(ksp.met))
 
 
 
