@@ -133,7 +133,7 @@ for(i in seq_along(for.fp)){
 t.hits <- matrix(data = c(0,0,0,0),nrow=1, ncol =4)
 t.hits <- as.data.frame(t.hits)
 
-for(i in 1:nrow(forcut.fp)){
+for(i in 1:length(forcut.fp)){
   t.hits[1,1] <- t.hits[1,1] + primer.hits(for.ornt[1], forcut.fp[[i]])
   t.hits[1,2] <- t.hits[1,2] + primer.hits(for.ornt[2], forcut.fp[[i]])
   t.hits[1,3] <- t.hits[1,3] + primer.hits(for.ornt[3], forcut.fp[[i]])
