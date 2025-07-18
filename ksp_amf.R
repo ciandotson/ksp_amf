@@ -39,13 +39,11 @@ for_reads <- opt$forward
 
 if (!requireNamespace("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
-BiocManager::install("dada2", version = "3.21", force = TRUE)
+
 library(dada2); packageVersion('dada2')
 
-BiocManager::install("ShortRead")
 library(ShortRead); packageVersion('ShortRead')
 
-BiocManager::install("Biostrings")
 library(Biostrings); packageVersion('Biostrings')
 
 # Read in the metadata from the cloned repository #
@@ -128,14 +126,14 @@ R1.flags <- paste("-g", for.primer) # tells cutadapt the sequence of the forward
 
 # Actual cutadapt command that loops through all files #
 for(i in seq_along(for.fp)){
-  system2(paste0("cutadapt ", R1.flags, " -n ", 2, " -o ", forcut.fp[i], " ", forfilt.fp[i]))
+  system2(paste0("cutadapt -g ", for.primer, " -n 2 -o ", forcut.fp[i], " ", forfilt.fp[i]))
 }
 
 ## Checking to make sure all of the primers were trimmed ##
 t.hits <- matrix(data = c(0,0,0,0),nrow=1, ncol =4)
 t.hits <- as.data.frame(t.hits)
 
-for(i in 1:nrow(for.fp)){
+for(i in 1:nrow(forcut.fp)){
   t.hits[1,1] <- t.hits[1,1] + primer.hits(for.ornt[1], forcut.fp[[i]])
   t.hits[1,2] <- t.hits[1,2] + primer.hits(for.ornt[2], forcut.fp[[i]])
   t.hits[1,3] <- t.hits[1,3] + primer.hits(for.ornt[3], forcut.fp[[i]])
