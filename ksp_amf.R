@@ -13,8 +13,7 @@ setwd("~/ksp_amf")
 # script in one go #
 
 # If required, the R package `optparse` is downloaded #
-if (!requireNamespace("optparse", quietly = TRUE))
-  install.packages("optparse")
+if (!requireNamespace("optparse", quietly = TRUE)) install.packages("optparse")
 library(optparse); packageVersion("optparse")
 
 # A special list of all the parsable objects is made #
@@ -37,13 +36,15 @@ for_reads <- opt$forward
 # this takes about a half an hour to both install and update all of your packages. Basically, you 
 # you use BiocManager (which, if you haven't installed, will be installed with this command)
 
-if (!requireNamespace("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 
+if (!requireNamespace("dada2", quietly = TRUE)) BiocManager::install("dada2")
 library(dada2); packageVersion('dada2')
 
+if (!requireNamespace("ShortRead", quietly = TRUE)) BiocManager::install("ShortRead")
 library(ShortRead); packageVersion('ShortRead')
 
+if (!requireNamespace("Biostrings", quietly = TRUE)) BiocManager::install("Biostrings")
 library(Biostrings); packageVersion('Biostrings')
 
 # Read in the metadata from the cloned repository #
@@ -176,7 +177,6 @@ ksp.st <- makeSequenceTable(for.dada)
 
 # Chimeras, or artifacts of DNA amplification and/or sequencing, can be simply removed using the below command
 nochim_ksp.st <- removeBimeraDenovo(ksp.st, method = 'consensus', multithread = TRUE, verbose = TRUE)
-nochim_ksp.st <- t(nochim_ksp.st)
 
 # Finally, we can track how many reads passed each step of the pipeline with the code below #
 getN <- function(x) sum(getUniques(x))
@@ -187,6 +187,11 @@ final.track <- as.data.frame(final.track)
 #### Assigning Taxonomy ####
 # To assign taxonomy, we use the MaarJAM database as a reference that has been adapted to be read by dada2 #
 ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", multithread = TRUE, verbose = TRUE)
+ksp.taxa <- as.data.frame(ksp.taxa)
+colnames(ksp.taxa) <- c('Family', "Genus", 'Species')
+
+# Finally, we can change the format of our ASV table ("nochim_ksp.st") and taxonomy tables ("ksp.taxa") into more convenient formats #
+nochim_ksp.st <- t(nochim_ksp.st)
 ksp.taxa <- as.matrix(ksp.taxa)
 
 #### Constructing phyloseq object ####
@@ -194,7 +199,10 @@ ksp.taxa <- as.matrix(ksp.taxa)
 # a metadata table, a taxonomy table, a phylogenetic tree, and a DNAStringSet Object. We will be focusing on the first three objects, #
 # which we have already made. #
 
+if (!requireNamespace("phyloseq", quietly = TRUE)) BiocManager::install("phyloseq")
 library(phyloseq); packageVersion("phyloseq")
+
+if (!requireNamespace("dplyr", quietly = TRUE)) install.packages("dplyr")
 library(dplyr); packageVersion('dplyr')
 
 # Here we actually make the phyloseq object (raw_ksp.ps) that contains the ASV table (nochim_ksp.st), taxonomy table (ksp.taxa), #
@@ -203,6 +211,69 @@ raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
                        tax_table(ksp.taxa),
                        sample_data(ksp.met))
 
+# We can save the DNA sequences of each ASV as they are saved as the row names of the ASV and taxonomy tables and then change the taxa names to "ASVn", #
+# where n is the number ASV the sequence corresponds to, which is ranked by total abundance across all samples #
+raw_ksp.dna <- Biostrings::DNAStringSet(taxa_names(raw_ksp.ps))
+names(raw_ksp.dna) <- taxa_names(raw_ksp.ps)
+raw_ksp.ps <- merge_phyloseq(raw_ksp.ps, raw_ksp.dna)
+taxa_names(raw_ksp.ps) <- paste0("ASV", seq(ntaxa(raw_ksp.ps)))
 
+# We can take this a step further and add the lowest level classification to the ASV in parentheses so we don't have to flip between taxonomy tables for exploratory # 
+raw_ksp.tax <- as.data.frame(tax_table(raw_ksp.ps))
+for(i in 1:nrow(raw_ksp.tax)){
+  if(!is.na(raw_ksp.tax$Species[i])){
+    rownames(raw_ksp.tax)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Species[i], ')')
+  } else if(!is.na(raw_ksp.tax$Genus[i])){
+    rownames(raw_ksp.tax)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Genus[i], ')')
+  } else if(!is.na(raw_ksp.tax$Family[i])){
+    rownames(raw_ksp.tax)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Family[i], ')')
+  }
+}
+
+# Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
+myc.ps <- subset_samples(raw_ksp.ps, Treatment == "MycoBloom")
+
+# This function below is a handy tool that decomposes phyloseq objects to a list of data.frames that make the data more easily manipulated and available, especially for seeing #
+# how taxonomy may be related to abundance when we look at the "fra" data.frames (short for Frankenstein as it is just the ASV table appended to the taxonomy table) #
+decompose_ps <- function(ps, label){
+  # function that decomposes a phyloseq object into separate data.frame and refseq objects (does not include tree) #
+  tax.tab <- as.data.frame(tax_table(ps))
+  otu.tab <- as.data.frame(otu_table(ps))
+  met.tab <- as(sample_data(ps), 'data.frame')
+  dna.tab <- refseq(ps)
+  fra.tab <- cbind(tax.tab, otu.tab)
+  decomposed = list(
+    tax = tax.tab,
+    otu = otu.tab,
+    met = met.tab,
+    dna = dna.tab,
+    fra = fra.tab
+  )
+  assign(label, decomposed, envir = .GlobalEnv)
+  invisible(decomposed)
+}
+
+# To make this decomposed phyloseq object, we just supply the phyloseq object and what we want to call it #
+decompose_ps(myc.ps, "myc")
+
+# Each component can be accessed by typing the name of the decomposed phyloseq object ("myc") followed by an accessor ("$") and the three letter abbreviation of the object #
+# ("tax" for taxonomy table, "otu" for asv table, "met" for metadata table, "dna" for DNAStringSet, and "fra" for the Frankenstein table) #
+myc$fra
+
+# Now we can remove the MycoBloom sample from our data because it is safely stored in this phyloseq object #
+ksp.ps <- subset_samples(raw_ksp.ps, Treatment != "MycoBloom")
+decompose_ps(ksp.ps, 'ksp')
+
+#### Taxonomy Validation ####
+
+#### Phylogenetic Tree Construction for Soils ####
+# Output the reads into a fasta file #
+writeXStringSet(ksp$dna, "./reads/ksp_input.fasta", use.names = TRUE)
+
+# Perform a multiple sequence alignment using MAFFT #
+system('mafft --auto --thread -1 ./reads/ksp_input.fasta > ./reads/ksp_aligned.fasta')
+
+# Construct a tree using IQTree with a general time reversible model with a gamma distribution and invariant site copies #
+system('iqtree -s ./reads/ksp_aligned.fasta -m GTR+G+I -nt AUTO')
 
 save.image("./ksp_amf.RData")
