@@ -163,6 +163,7 @@ ksp.st <- makeSequenceTable(for.dada)
 
 # Chimeras, or artifacts of DNA amplification and/or sequencing, can be simply removed using the below command
 nochim_ksp.st <- removeBimeraDenovo(ksp.st, method = 'consensus', multithread = TRUE, verbose = TRUE)
+nochim_ksp.st <- t(nochim_ksp.st)
 
 # Finally, we can track how many reads passed each step of the pipeline with the code below #
 getN <- function(x) sum(getUniques(x))
@@ -174,5 +175,21 @@ final.track <- as.data.frame(final.track)
 # To assign taxonomy, we use the MaarJAM database as a reference that has been adapted to be read by dada2 #
 ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", multithread = TRUE, verbose = TRUE)
 ksp.taxa <- as.matrix(ksp.taxa)
+
+#### Constructing phyloseq object ####
+# The phyloseq object is a means of combining and summarizing all relevant features of a microbiome dataset through an ASV table, #
+# a metadata table, a taxonomy table, a phylogenetic tree, and a DNAStringSet Object. We will be focusing on the first three objects, #
+# which we have already made. #
+
+library(phyloseq); packageVersion("phyloseq")
+library(dplyr); packageVersion('dplyr')
+
+# Here we actually make the phyloseq object (raw_ksp.ps) that contains the ASV table (nochim_ksp.st), taxonomy table (ksp.taxa), #
+# and metadata table (all.met) #
+raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
+                       tax_table(ksp.taxa),
+                       sample_data(all.met))
+
+
 
 save.image("./ksp_amf.RData")
