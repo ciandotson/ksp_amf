@@ -91,7 +91,7 @@ if(!dir.exists('./reads/filtN'))
 forfilt.fp <- file.path('./reads/filtN', paste0(sample.names, '_filtN_R1.fastq.gz'))
 
 # Perform the filtering with the only unqiue parameter being maxN = 0 #
-prefilt.track <- filterAndTrim(for.fp, forfilt.fp, maxN = 0, multithread = FALSE)
+prefilt.track <- filterAndTrim(for.fp, forfilt.fp, maxN = 0, multithread = TRUE, verbose = TRUE)
 # The results are written directly to the new files we denoted in the last two commands, so nothing new needs to be saved #
 
 # To compare all of the orientations of our primers to the newly pre-filtered reads, we can make a function that lines up the orientations to these reads and tells us the number of hits #
@@ -145,16 +145,16 @@ forpost.fp <- file.path("./reads/filtered", paste0(sample.names, '_F_filt.fastq.
 
 # Filter out reads that have any ambiguous base calls (maxN = 0) and reads with expected errors above 2 (maxEE = 2), while truncating reads to 200 bp (truncLen = 200, as described in Lekberg et al., 2023) or at first instance in which expected error is above 2 (truncQ = 2) # 
 postfilt.track <- filterAndTrim(forcut.fp, forpost.fp, maxN = 0, maxEE = 2, truncLen = 200,
-                     truncQ = 2, rm.phix = TRUE, compress = TRUE, multithread = FALSE, verbose = TRUE)
+                     truncQ = 2, rm.phix = TRUE, compress = TRUE, multithread = TRUE, verbose = TRUE)
 
 # With filtering finished, dada2 can learn the error rates that are specific to the given dataset #
-for.er <- learnErrors(forpost.fp, multithread=FALSE, verbose = TRUE)
+for.er <- learnErrors(forpost.fp, multithread=TRUE, verbose = TRUE)
 
 # Another way to help speed up the process is by dereplication, or only saving one copy of each each unique sequence, which is what is done below #
-for.derep <- derepFastq(forpost.fp, verbose = TRUE)
+for.derep <- derepFastq(forpost.fp,verbose = TRUE)
 
 # Finally, dada2 can take the error model to denoise the derepelicated sequneces into Analyzed Sequence Variants (ASVs) #
-for.dada <- dada(for.derep, err = for.er, multithread = FALSE, verbose = TRUE)
+for.dada <- dada(for.derep, err = for.er, multithread = TRUE, verbose = TRUE)
 
 save.image("./ksp_amf.RData")
 
@@ -162,7 +162,7 @@ save.image("./ksp_amf.RData")
 ksp.st <- makeSequenceTable(for.dada)
 
 # Chimeras, or artifacts of DNA amplification and/or sequencing, can be simply removed using the below command
-nochim_ksp.st <- removeBimeraDenovo(ksp.st, method = 'consensus', multithread = FALSE, verbose = TRUE)
+nochim_ksp.st <- removeBimeraDenovo(ksp.st, method = 'consensus', multithread = TRUE, verbose = TRUE)
 
 # Finally, we can track how many reads passed each step of the pipeline with the code below #
 getN <- function(x) sum(getUniques(x))
@@ -172,7 +172,7 @@ final.track <- as.data.frame(final.track)
 
 #### Assigning Taxonomy ####
 # To assign taxonomy, we use the MaarJAM database as a reference that has been adapted to be read by dada2 #
-ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", multithread = FALSE, verbose = TRUE)
+ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", multithread = TRUE, verbose = TRUE)
 ksp.taxa <- as.matrix(ksp.taxa)
 
 save.image("./ksp_amf.RData")
