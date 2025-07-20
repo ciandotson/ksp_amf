@@ -218,6 +218,7 @@ library(dplyr); packageVersion('dplyr')
 
 # Here we actually make the phyloseq object (raw_ksp.ps) that contains the ASV table (nochim_ksp.st), taxonomy table (ksp.taxa), #
 # and metadata table (ksp.met) #
+nochim_ksp.st <- t(nochim_ksp.st)
 raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
                        tax_table(ksp.taxa),
                        sample_data(ksp.met))
