@@ -197,8 +197,10 @@ ksp.taxa <- as.data.frame(ksp.taxa)
 colnames(ksp.taxa) <- c('Family', "Genus", 'Species')
 
 # Finally, we can change the format of our ASV table ("nochim_ksp.st") and taxonomy tables ("ksp.taxa") into more convenient formats #
-nochim_ksp.st <- t(nochim_ksp.st)
 ksp.taxa <- as.matrix(ksp.taxa)
+
+# make sure the rownames of the metadata tables matches the column names of the ASV table #
+colnames(nochim_ksp.st) <- rownames(ksp.met)
 
 resave(ksp.taxa, file = "./abridged.RData")
 save.image("./ksp_amf.RData")
@@ -231,16 +233,17 @@ taxa_names(raw_ksp.ps) <- paste0("ASV", seq(ntaxa(raw_ksp.ps)))
 raw_ksp.tax <- as.data.frame(tax_table(raw_ksp.ps))
 for(i in 1:nrow(raw_ksp.tax)){
   if(!is.na(raw_ksp.tax$Species[i])){
-    rownames(raw_ksp.tax)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Species[i], ')')
+    taxa_names(raw_ksp.ps)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Species[i], ')')
   } else if(!is.na(raw_ksp.tax$Genus[i])){
-    rownames(raw_ksp.tax)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Genus[i], ')')
+    taxa_names(raw_ksp.ps)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Genus[i], ')')
   } else if(!is.na(raw_ksp.tax$Family[i])){
-    rownames(raw_ksp.tax)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Family[i], ')')
+    taxa_names(raw_ksp.ps)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Family[i], ')')
   }
 }
 
 # Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
 myc.ps <- subset_samples(raw_ksp.ps, Treatment == "MycoBloom")
+myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 
 # This function below is a handy tool that decomposes phyloseq objects to a list of data.frames that make the data more easily manipulated and available, especially for seeing #
 # how taxonomy may be related to abundance when we look at the "fra" data.frames (short for Frankenstein as it is just the ASV table appended to the taxonomy table) #
@@ -274,6 +277,42 @@ ksp.ps <- subset_samples(raw_ksp.ps, Treatment != "MycoBloom")
 decompose_ps(ksp.ps, 'ksp')
 
 #### Taxonomy Validation ####
+# Here we blast all of the sequences we have returned and make sure that the asvs we get back actually correspond to something that is at least mostly fungal #
+if(!requireNamespace("rBLAST")) BiocManager::install("rBLAST")
+library(rBLAST); packageVersion('rBLAST')
+
+# Create local blast database from the 16S rRNA database using rBLAST #
+blast.tar <- blast_db_get("SSU_eukaryote_rRNA.tar.gz ", baseURL = 'https://ftp.ncbi.nlm.nih.gov/blast/db/', check_update = TRUE)
+untar(blast.tar, exdir = './reference/SSU_database')
+list.files('./reference/SSU_database')
+blast.db <- blast(db = './reference/SSU_database/SSU_eukaryote_rRNA')
+
+# Performs the blast for each read and returns the best hit #
+ksp.hits <- matrix(nrow = nrow(ksp$tax), ncol = 12)
+ksp.hits <- as.data.frame(ksp.hits) 
+hold <- c()
+for(i in 1:length(ksp$dna)){
+  hold <- predict(blast.db, ksp$dna[i])
+  ksp.hits[i,] <- hold[1,]
+  ksp$tax$Best_Hit[i] <- hold[1, 2]
+}
+
+# Filter out reads that do not correspond to a NCBI entry #
+filt_ksp.tax <- filter(ksp$tax, !is.na(ksp$tax$Best_Hit))
+
+# Output the resulting NCBI entry names to a list #
+if(!dir.exists("./blast_hits")){
+  dir.create('./blast_hits')
+}
+write.table(filt_ksp.tax$Best_Hit, './blast_hits/ksp_blast_hits.txt')
+
+# Call the python script to retrieve the taxonomies of the matched entries #
+system('python3 ~/ksp_amf/SSU_BLAST.py -i ./blast_hits/ksp_blast_hits.txt -o ./blast_hits/ksp_ncbi_hits.csv')
+
+# Read in the output from the python script and make new taxonomy table "soil_ncbi_fin.tax" #
+ksp_ncbi.taxa <- read.csv2('./blast_hits/ksp_ncbi_hits.csv', header = FALSE, fill = TRUE)
+
+resave(ksp_ncbi.taxa, file = "./abridged.RData")
 
 #### Phylogenetic Tree Construction for Soils ####
 # Output the reads into a fasta file #
