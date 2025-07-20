@@ -200,7 +200,7 @@ colnames(ksp.taxa) <- c('Family', "Genus", 'Species')
 ksp.taxa <- as.matrix(ksp.taxa)
 
 # make sure the rownames of the metadata tables matches the column names of the ASV table #
-colnames(nochim_ksp.st) <- rownames(ksp.met)
+rownames(nochim_ksp.st) <- rownames(ksp.met)
 
 resave(ksp.taxa, file = "./abridged.RData")
 save.image("./ksp_amf.RData")
