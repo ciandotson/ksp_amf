@@ -47,6 +47,9 @@ library(ShortRead); packageVersion('ShortRead')
 if (!requireNamespace("Biostrings", quietly = TRUE)) BiocManager::install("Biostrings")
 library(Biostrings); packageVersion('Biostrings')
 
+if(!requireNamespace("cgwtools", quietly = TRUE)) install.packages("cgwtools")
+library(cgwtools); packageVersion("cgwtools")
+
 # Read in the metadata from the cloned repository #
 ksp.met <- read.csv2(file = './metadata/Fungal_Community_Soil_Samples_KSP.csv', sep = ',')
 
@@ -178,6 +181,9 @@ ksp.st <- makeSequenceTable(for.dada)
 # Chimeras, or artifacts of DNA amplification and/or sequencing, can be simply removed using the below command
 nochim_ksp.st <- removeBimeraDenovo(ksp.st, method = 'consensus', multithread = TRUE, verbose = TRUE)
 
+save(nochim_ksp.st, file = "./abridged.RData")
+resave(ksp.met, file = "./abridged.RData")
+
 # Finally, we can track how many reads passed each step of the pipeline with the code below #
 getN <- function(x) sum(getUniques(x))
 final.track <- cbind(prefilt.track[,1], prefilt.track[,2], postfilt.track[,2], sapply(for.dada, getN), colSums(nochim_ksp.st))
@@ -193,6 +199,9 @@ colnames(ksp.taxa) <- c('Family', "Genus", 'Species')
 # Finally, we can change the format of our ASV table ("nochim_ksp.st") and taxonomy tables ("ksp.taxa") into more convenient formats #
 nochim_ksp.st <- t(nochim_ksp.st)
 ksp.taxa <- as.matrix(ksp.taxa)
+
+resave(ksp.taxa, file = "./abridged.RData")
+save.image("./ksp_amf.RData")
 
 #### Constructing phyloseq object ####
 # The phyloseq object is a means of combining and summarizing all relevant features of a microbiome dataset through an ASV table, #
