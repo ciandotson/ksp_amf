@@ -311,24 +311,40 @@ write.table(filt_ksp.tax$Best_Hit, './blast_hits/ksp_blast_hits.txt')
 # Call the python script to retrieve the taxonomies of the matched entries #
 system('python3 ~/ksp_amf/SSU_BLAST.py -i ./blast_hits/ksp_blast_hits.txt -o ./blast_hits/ksp_ncbi_hits.csv')
 
-# Read in the output from the python script and make new taxonomy table "soil_ncbi_fin.tax" #
-ksp_ncbi.taxa <- read.csv2('./blast_hits/ksp_ncbi_hits.csv',, header = FALSE, fill = TRUE)
+# Read in the output from the python script and make new taxonomy table "s_ncbi_fin.tax" #
+ksp_ncbi.taxa <- read.csv2('./blast_hits/ksp_ncbi_hits.csv', header = FALSE, fill = TRUE)
 ksp_ncbi.int <- strsplit(as.character(ksp_ncbi.taxa$V1), ",")
 ksp_ncbi_fin.tax <- do.call(rbind, lapply(ksp_ncbi.int, function(x) { length(x) <- max(sapply(ksp_ncbi.int, length)); x }))
 
+# Join the two taxa tables into `double_ksp.tax` (double because it is validated by both BLAST and the MaarJAM databse) and use it to filter the old phyloseq object; #
+# make the concatenated taxa table the taxa table for the phyloseq object #
 double_ksp.tax <- cbind(filt_ksp.tax, ksp_ncbi_fin.tax)
-resave(ksp_ncbi.taxa, file = "./abridged.RData")
+ksp.ps <- subset_taxa(raw_ksp.ps, taxa_names(raw_ksp.ps) %in% rownames(double_ksp.tax))
+tax_table(ksp.ps) <- as.matrix(double_ksp.tax)
 
-ksp.ps <- subset_samples(raw_ksp.ps, taxa_names(raw_ksp.ps) %in% rownames(double_ksp.tax))
+# Filter out ASVs that correspond to non-fungal targets #
+ksp.ps <- subset_taxa(ksp.ps, X2 != "Metazoa")
+ksp.ps <- subset_taxa(ksp.ps, X2 != "Sar")
+
+ksp_fun.ps <- subset_taxa(ksp.ps, taxa_sums(ksp.ps) > 0)
+ksp_fis.ps <- subset_samples(ksp_fun.ps, X3 == "Fungi incertae sedis")
+
+decompose_ps(ksp_fun.ps, 'ksp_fun')
+decompose_ps(ksp_fis.ps, 'ksp_fis')
+
 
 #### Phylogenetic Tree Construction for Soils ####
 # Output the reads into a fasta file #
-writeXStringSet(ksp$dna, "./reads/ksp_input.fasta", use.names = TRUE)
+writeXStringSet(ksp_fun$dna, "./reads/ksp_fun_input.fasta", use.names = TRUE)
+writeXStringSet(ksp_fis$dna, "./reads/ksp_fis_input.fasta", use.names = TRUE)
 
 # Perform a multiple sequence alignment using MAFFT #
-system('mafft --auto --thread -1 ./reads/ksp_input.fasta > ./reads/ksp_aligned.fasta')
+system('mafft --auto --thread -1 ./reads/ksp_fun_input.fasta > ./reads/ksp_fun_aligned.fasta')
+system('mafft --auto --thread -1 ./reads/ksp_fis_input.fasta > ./reads/ksp_fis_aligned.fasta')
 
 # Construct a tree using IQTree with a general time reversible model with a gamma distribution and invariant site copies #
-system('iqtree -s ./reads/ksp_aligned.fasta -m GTR+G+I -nt AUTO')
+system('iqtree -s ./reads/ksp_fun_aligned.fasta -m GTR+G+I -nt AUTO')
+system('iqtree -s ./reads/ksp_fis_aligned.fasta -m GTR+G+I -nt AUTO')
+
 
 save.image("./ksp_amf.RData")
