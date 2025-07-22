@@ -275,6 +275,7 @@ myc$fra
 
 # Now we can remove the MycoBloom sample from our data because it is safely stored in this phyloseq object #
 ksp.ps <- subset_samples(raw_ksp.ps, Treatment != "MycoBloom")
+ksp.ps <- subset_samples(ksp.ps, Treatment != "TC")
 decompose_ps(ksp.ps, 'ksp')
 
 #### Taxonomy Validation ####
@@ -283,7 +284,7 @@ if(!requireNamespace("rBLAST")) BiocManager::install("rBLAST")
 library(rBLAST); packageVersion('rBLAST')
 
 # Create local blast database from the 16S rRNA database using rBLAST #
-blast.tar <- blast_db_get("SSU_eukaryote_rRNA.tar.gz ", baseURL = 'https://ftp.ncbi.nlm.nih.gov/blast/db/', check_update = TRUE)
+blast.tar <- blast_db_get("SSU_eukaryote_rRNA.tar.gz", baseURL = 'https://ftp.ncbi.nlm.nih.gov/blast/db/', check_update = TRUE)
 untar(blast.tar, exdir = './reference/SSU_database')
 list.files('./reference/SSU_database')
 blast.db <- blast(db = './reference/SSU_database/SSU_eukaryote_rRNA')
@@ -311,9 +312,14 @@ write.table(filt_ksp.tax$Best_Hit, './blast_hits/ksp_blast_hits.txt')
 system('python3 ~/ksp_amf/SSU_BLAST.py -i ./blast_hits/ksp_blast_hits.txt -o ./blast_hits/ksp_ncbi_hits.csv')
 
 # Read in the output from the python script and make new taxonomy table "soil_ncbi_fin.tax" #
-ksp_ncbi.taxa <- read.csv2('./blast_hits/ksp_ncbi_hits.csv', header = FALSE, fill = TRUE)
+ksp_ncbi.taxa <- read.csv2('./blast_hits/ksp_ncbi_hits.csv',, header = FALSE, fill = TRUE)
+ksp_ncbi.int <- strsplit(as.character(ksp_ncbi.taxa$V1), ",")
+ksp_ncbi_fin.tax <- do.call(rbind, lapply(ksp_ncbi.int, function(x) { length(x) <- max(sapply(ksp_ncbi.int, length)); x }))
 
+double_ksp.tax <- cbind(filt_ksp.tax, ksp_ncbi_fin.tax)
 resave(ksp_ncbi.taxa, file = "./abridged.RData")
+
+ksp.ps <- subset_samples(raw_ksp.ps, taxa_names(raw_ksp.ps) %in% rownames(double_ksp.tax))
 
 #### Phylogenetic Tree Construction for Soils ####
 # Output the reads into a fasta file #
