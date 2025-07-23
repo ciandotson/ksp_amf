@@ -34,7 +34,7 @@ nochim_ksp.st <- t(nochim_ksp.st)
 raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
                        tax_table(ksp.taxa),
                        sample_data(ksp.met))
-
+library(cgwtools)
 resave(raw_ksp.ps, file = "./abridged.RData")
 
 # Filter out samples that did not have any matches to the MaarJAM database #
