@@ -108,7 +108,7 @@ blast.db <- blast(db = './reference/SSU_database/SSU_eukaryote_rRNA')
 
 # Performs the blast for each read and returns the best hit #
 ksp.hits <- matrix(nrow = nrow(raw_ksp$tax), ncol = 12)
-ksp.hits <- as.data.frame(raw_ksp.hits) 
+ksp.hits <- as.data.frame(ksp.hits) 
 hold <- c()
 for(i in 1:length(raw_ksp$dna)){
   hold <- predict(blast.db, raw_ksp$dna[i])
