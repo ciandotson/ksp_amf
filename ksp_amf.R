@@ -229,7 +229,7 @@ raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
 resave(raw_ksp.ps, file = "./abridged.RData")
 
 # Filter out samples that did not have any matches to the MaarJAM database #
-raw_ksp.ps <- subset_taxa(ksp.ps, !is.na(Family))
+raw_ksp.ps <- subset_taxa(raw_ksp.ps, !is.na(Family))
 
 # We can save the DNA sequences of each ASV as they are saved as the row names of the ASV and taxonomy tables and then change the taxa names to "ASVn", #
 # where n is the number ASV the sequence corresponds to, which is ranked by total abundance across all samples #
