@@ -346,5 +346,10 @@ system('mafft --auto --thread -1 ./reads/ksp_fis_input.fasta > ./reads/ksp_fis_a
 system('iqtree -s ./reads/ksp_fun_aligned.fasta -m GTR+G+I -nt AUTO')
 system('iqtree -s ./reads/ksp_fis_aligned.fasta -m GTR+G+I -nt AUTO')
 
+if(!requireNamespace('ape')) install.packages('ape')
+library(ape); packageVersion('ape')
+ksp_fun.tre <- read.tree("./reads/ksp_fun_aligned.fasta.treefile")
+ksp_fun.tre$tip.label <- sub("^(ASV[0-9]+)_([^_]+)_$", "\\1(\\2)", ksp_fun.tre$tip.label)
+
 
 save.image("./ksp_amf.RData")
