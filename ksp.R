@@ -25,7 +25,10 @@ library(dada2)
 library(phyloseq)
 library(Biostrings)
 library(dplyr)
+library(cgwtools)
 
+save.image("ksp_amf.RData")
+save(final_ksp.ps, file = "hold.RData")
 
 #### Phylogenetic Tree Construction for Soils ####
 # Add Outgroups to the data to try and catch any non-AMF reads that have made it through #
@@ -70,7 +73,7 @@ out.tip <- phy_tree(ksp.tre$tip.label[out.des[out.des <= length(ksp.tre$tip.labe
 # Finally, remove the taxa denoted in the tips denoted in out.tip from the phyloseq object #
 final_ksp.ps <- subset_taxa(final_ksp.ps, !taxa_names(final_ksp.ps) %in% out.tip)
                     
-resave(final_ksp.ps, file = "./abridged.RData") 
+resave(final_ksp.ps, file = "hold.RData") 
 save.image("ksp_amf.RData")
 
 #### Alpha Diversity Measurement and Visualization ####
