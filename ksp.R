@@ -27,7 +27,7 @@ library(phyloseq); packageVersion("phyloseq")
 
 if (!requireNamespace("dplyr", quietly = TRUE)) install.packages("dplyr")
 library(dplyr); packageVersion('dplyr')
-
+load("ksp_amf.RData")
 # Here we actually make the phyloseq object (raw_ksp.ps) that contains the ASV table (nochim_ksp.st), taxonomy table (ksp.taxa), #
 # and metadata table (ksp.met) #
 nochim_ksp.st <- t(nochim_ksp.st)
