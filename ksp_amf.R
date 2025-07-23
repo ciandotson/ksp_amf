@@ -337,7 +337,8 @@ final_ksp.ps <- subset_taxa(ksp.ps, X2 == "Fungi")
 #### Phylogenetic Tree Construction for Soils ####
 # Add Outgroups to the data to try and catch any non-AMF reads that have made it through #
 decompose_ps(final_ksp.ps, 'final_ksp')
-out.dna <- readDNAStringSet('./reference/outgroup.fasta')
+out.rna <- readRNAStringSet('./reference/outgroup.fasta')
+out.dna <- DNAStringSet(out.rna)
 names(out.dna) <- c("Outgroup1", "Outgroup2")
 tree.dna <- c(final_ksp$dna, out.dna)
 
