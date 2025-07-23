@@ -277,14 +277,15 @@ decompose_ps <- function(ps, label){
 }
 
 # To make this decomposed phyloseq object, we just supply the phyloseq object and what we want to call it #
-decompose_ps(myc.ps, "myc")
+decompose_ps(raw_ksp.ps, "raw_ksp")
 
-# Each component can be accessed by typing the name of the decomposed phyloseq object ("myc") followed by an accessor ("$") and the three letter abbreviation of the object #
+# Each component can be accessed by typing the name of the decomposed phyloseq object ("raw_ksp") followed by an accessor ("$") and the three letter abbreviation of the object #
 # ("tax" for taxonomy table, "otu" for asv table, "met" for metadata table, "dna" for DNAStringSet, and "fra" for the Frankenstein table) #
-myc$fra
+raw_ksp$fra
 
-resave(myc, file = "./abridged.RData")
+resave(raw_ksp, file = "./abridged.RData")
 
+# Do the same for the whole 
 
 #### Taxonomy Validation ####
 # Here we blast all of the sequences we have returned and make sure that the asvs we get back actually correspond to something that is at least mostly fungal #
