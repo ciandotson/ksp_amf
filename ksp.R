@@ -107,17 +107,17 @@ list.files('./reference/SSU_database')
 blast.db <- blast(db = './reference/SSU_database/SSU_eukaryote_rRNA')
 
 # Performs the blast for each read and returns the best hit #
-ksp.hits <- matrix(nrow = nrow(ksp$tax), ncol = 12)
-ksp.hits <- as.data.frame(ksp.hits) 
+ksp.hits <- matrix(nrow = nrow(raw_ksp$tax), ncol = 12)
+ksp.hits <- as.data.frame(raw_ksp.hits) 
 hold <- c()
-for(i in 1:length(ksp$dna)){
-  hold <- predict(blast.db, ksp$dna[i])
+for(i in 1:length(raw_ksp$dna)){
+  hold <- predict(blast.db, raw_ksp$dna[i])
   ksp.hits[i,] <- hold[1,]
-  ksp$tax$Best_Hit[i] <- hold[1, 2]
+  raw_ksp$tax$Best_Hit[i] <- hold[1, 2]
 }
 
 # Filter out reads that do not correspond to a NCBI entry #
-filt_ksp.tax <- filter(ksp$tax, !is.na(ksp$tax$Best_Hit))
+filt_ksp.tax <- filter(raw_ksp$tax, !is.na(raw_ksp$tax$Best_Hit))
 
 # Output the resulting NCBI entry names to a list #
 if(!dir.exists("./blast_hits")){
