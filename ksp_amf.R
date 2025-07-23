@@ -226,7 +226,7 @@ raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
                        tax_table(ksp.taxa),
                        sample_data(ksp.met))
 
-resave(raw_ksp.ps, )
+resave(raw_ksp.ps, file = "./abridged.RData")
 
 # Filter out samples that did not have any matches to the MaarJAM database #
 raw_ksp.ps <- tax_table(subset_taxa(ksp.ps, !is.na(Family)))
@@ -749,7 +749,7 @@ g_prop.ps <- transform_sample_counts(g.ps, function(otu) otu/sum(otu))
 g_ord.pcoa.wuni <- ordinate(g_prop.ps, method="PCoA", distance="bray")
 g.bdist <- phyloseq::distance(g.ps, method = "bray", weighted = F)
 
-g.perm <- adonis2(f.bdist~Treatment, data = g.met)
+g.perm <- adonis2(g.bdist~Treatment, data = g.met)
 g.perm
 
 plot_ordination(g_prop.ps, g_ord.pcoa.wuni, color="Treatment", title="G Samples PCoA") +
@@ -764,7 +764,7 @@ h_prop.ps <- transform_sample_counts(h.ps, function(otu) otu/sum(otu))
 h_ord.pcoa.wuni <- ordinate(h_prop.ps, method="PCoA", distance="bray")
 h.bdist <- phyloseq::distance(h.ps, method = "bray", weighted = F)
 
-h.perm <- adonis2(f.bdist~Treatment, data = h.met)
+h.perm <- adonis2(h.bdist~Treatment, data = h.met)
 h.perm
 
 plot_ordination(h_prop.ps, h_ord.pcoa.wuni, color="Treatment", title="H Samples PCoA") +
