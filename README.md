@@ -17,6 +17,7 @@ Once the user performs these tasks, the R script `ksp_amf.R`, will perform the w
 # 1. Cloning the Repository
 Aside from the raw reads, which is explained in step 2, all of the data and scripts necessary to run this pipeline is found in this repository. To clone this repository, open your terminal and run the following commands:
 
-`cd
-git clone 
+  `cd`
+  
+  `git clone https://github.com/ciandotson/ksp_amf.git`
 
