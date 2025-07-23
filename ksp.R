@@ -141,10 +141,11 @@ tax_table(ksp.ps) <- as.matrix(double_ksp.tax)
 
 # Filter out ASVs that correspond to non-fungal targets #
 final_ksp.ps <- subset_taxa(ksp.ps, X2 == "Fungi")
+save.image('./abridged.RData')
 
 #### Phylogenetic Tree Construction for Soils ####
 # Add Outgroups to the data to try and catch any non-AMF reads that have made it through #
-decompose_ps(final_ksp.ps, final_ksp)
+decompose_ps(final_ksp.ps, 'final_ksp')
 out.dna <- readDNAStringSet('./reference/outgroup.fasta')
 names(out.dna) <- c("Outgroup1", "Outgroup2")
 tree.dna <- c(final_ksp$dna, out.dna)
