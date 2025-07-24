@@ -285,8 +285,6 @@ raw_ksp$fra
 
 resave(raw_ksp, file = "./abridged.RData")
 
-# Do the same for the whole 
-
 #### Taxonomy Validation ####
 # Here we blast all of the sequences we have returned and make sure that the asvs we get back actually correspond to something that is at least mostly fungal #
 if(!requireNamespace("rBLAST")) BiocManager::install("rBLAST")
@@ -359,7 +357,7 @@ library(phytools); packageVersion('phytools')
 
 # Read the tree into R and change the tip labels such that they match what was originally input # 
 ksp.tre <- read.tree("./reads/ksp_aligned.fasta.treefile")
-ksp.tre$tip.label <- sub("^(ASV[0-9]+)_([^_]+)_$", "\\1(\\2)", ksp_fun.tre$tip.label)
+ksp.tre$tip.label <- sub("^(ASV[0-9]+)_([^_]+)_$", "\\1(\\2)", ksp.tre$tip.label)
 
 # Save the tree into the phyloseq object #
 phy_tree(final_ksp.ps) <- ksp.tre
@@ -372,18 +370,58 @@ out.mrca <- getMRCA(ksp.tre, out.nam)
 
 # Find all of the descendants of this MRCA #
 out.des <- getDescendants(ksp.tre, out.mrca)
-out.tip <- phy_tree(ksp.tre$tip.label[out.des[out.des <= length(ksp.tre$tip.label)]])
+out.tip <- ksp.tre$tip.label[out.des[out.des <= length(ksp.tre$tip.label)]]
 
 # Finally, remove the taxa denoted in the tips denoted in out.tip from the phyloseq object #
 final_ksp.ps <- subset_taxa(final_ksp.ps, !taxa_names(final_ksp.ps) %in% out.tip)
-                    
-resave(final_ksp.ps, file = "./abridged.RData") 
+
+# Remove the control samples #
+final_ksp.ps <- subset_samples(final_ksp.ps, Treatment != "TC")
+final_ksp.ps <- subset_taxa(final_ksp.ps, taxa_sums(final_ksp.ps) > 0)
+
+# Reorganize the ASV table in decresaing order of taxa abundance #
+decompose_ps(final_ksp.ps, 'final_ksp')
+final_ksp$otu <- arrange(final_ksp$otu, desc(rowSums(final_ksp$otu)))
+final_ksp$tax <- final_ksp$tax[rownames(final_ksp$otu),]
+
+# Resave the new final phyloseq object #
+final_ksp.ps <- phyloseq(otu_table(final_ksp$otu, taxa_are_rows = TRUE),
+                         tax_table(as.matrix(final_ksp$tax)),
+                         sample_data(final_ksp$met),
+                         refseq(final_ksp$dna),
+                         phy_tree(phy_tree(final_ksp.ps)))
+
+# Rename taxa so they correspond to their new ordering based on abundance #
+taxa_names(final_ksp.ps) <- paste0("ASV", seq(ntaxa(final_ksp.ps)))
+final_ksp.tax <- as.data.frame(tax_table(final_ksp.ps))
+for(i in 1:nrow(final_ksp.tax)){
+  if(!is.na(final_ksp.tax$Species[i])){
+    if(final_ksp.tax$Species[i] != "sp.") {
+      taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Species[i], ')')}
+      else(taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Genus[i], ')'))
+  } else if(!is.na(final_ksp.tax$Genus[i])){
+    taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Genus[i], ')')
+  } else if(!is.na(final_ksp.tax$Family[i])){
+    taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Family[i], ')')
+  }
+}
+
+decompose_ps(final_ksp.ps, 'final_ksp')
+resave(final_ksp.ps, file = "./hold.RData") 
+
+# Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
+myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
+myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
+decompose_ps(myc.ps, 'myc')
+myc$fra <- arrange(myc$fra, desc(myc$fra$MycoBloom1))
+
 save.image("ksp_amf.RData")
 
 #### Alpha Diversity Measurement and Visualization ####
 ksp.rich <- estimate_richness(final_ksp.ps) # automatically performs alpha diversity calculations #
-ksp.rich <- cbind(ksp.met, ksp.rich)
-View(ksp.rich)
+ksp.rich <- cbind(final_ksp$met, ksp.rich)
+myc.rich <- filter(ksp.rich, Treatment == "MycoBloom")
+ksp.rich <- filter(ksp.rich, Treatment != "MycoBloom")
 
 # ANOVA for each kind of alpha diversity 
 ksp.sha <- aov(Shannon ~ Site*Treatment, ksp.rich) 
@@ -417,7 +455,6 @@ ksp_rich.mnsd <- ksp.rich %>%
   )
 
 ksp_rich.mnsd <- as.data.frame(ksp_rich.mnsd)
-ksp_rich.mnsd <- filter(ksp_rich.mnsd, Treatment != 'MycoBloom')
 
 # Individual Site  Diversity # 
 a.rich <- filter(ksp.rich, Site == 'A')
@@ -428,6 +465,15 @@ e.rich <- filter(ksp.rich, Site == 'E')
 f.rich <- filter(ksp.rich, Site == 'F')
 g.rich <- filter(ksp.rich, Site == 'G')
 h.rich <- filter(ksp.rich, Site == 'H')
+
+a.rich <- arrange(a.rich, Treatment)
+b.rich <- arrange(b.rich, Treatment)
+c.rich <- arrange(c.rich, Treatment)
+d.rich <- arrange(d.rich, Treatment)
+e.rich <- arrange(e.rich, Treatment)
+f.rich <- arrange(f.rich, Treatment)
+g.rich <- arrange(g.rich, Treatment)
+h.rich <- arrange(h.rich, Treatment)
 
 # Shannon Diversity #
 if(!requireNamespace("multcompView")) install.packages("multcompView")
@@ -454,7 +500,7 @@ c_sha.let <- multcompLetters4(c.sha, c_sha.hsd)
 d.sha <- aov(Shannon~Treatment, d.rich)
 summary(d.sha)
 d_sha.hsd <- TukeyHSD(d.sha)
-d_sha.hsd # Low vs. control #
+d_sha.hsd
 d_sha.let <- multcompLetters4(d.sha, d_sha.hsd)
 
 e.sha <- aov(Shannon~Treatment, e.rich)
@@ -476,7 +522,7 @@ g_sha.hsd
 g_sha.let <- multcompLetters4(g.sha, g_sha.hsd)
 
 h.sha <- aov(Shannon~Treatment, h.rich)
-summary(a.sha)
+summary(h.sha)
 h_sha.hsd <- TukeyHSD(h.sha)
 h_sha.hsd
 h_sha.let <- multcompLetters4(h.sha, h_sha.hsd)
@@ -491,12 +537,23 @@ sha.let <- c(a_sha.let$Treatment$Letters,
              h_sha.let$Treatment$Letters)
 plot.rich <- cbind(ksp_rich.mnsd, sha.let)
 
-ggplot(plot.rich, aes(x = Site, y = sha.mean, fill = Treatment, color = Treatment)) +
+plot.rich$Treats <- factor(plot.rich$Treatment, levels = c("Control", "Low", "High"))
+plot.rich$sha.let[7] <- 'ab'
+plot.rich$sha.let[8] <- 'b'
+plot.rich$sha.let[9] <- 'a'
+plot.rich$sha.let[19] <- 'b'
+plot.rich$sha.let[20] <- 'a'
+plot.rich$sha.let[22] <- 'b'
+plot.rich$sha.let[23] <- 'a'
+plot.rich$sha.let[24] <- 'b'
+
+sha.plot <- ggplot(plot.rich, aes(x = Site, y = sha.mean, fill = Treats, color = Treats)) +
   geom_bar(stat = 'summary', position = 'dodge', width = 0.7) +
   theme_prism() +
   ylab('Shannon Diversity') +
   scale_fill_manual(values = c("white", "gray", "#4D4D4D", 'black')) +
   scale_color_manual(values = c('black', 'black', 'black')) +
+  scale_y_continuous(limits = c(0,6)) +
   ggtitle('Shannon Diversity') +
   geom_text(aes(label = sha.let, y = sha.mean + sha.sd + 0.1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 12) +
   geom_errorbar(aes(ymin = sha.mean - sha.sd, ymax = sha.mean + sha.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
@@ -523,7 +580,7 @@ c_sim.let <- multcompLetters4(c.sim, c_sim.hsd)
 d.sim <- aov(Simpson~Treatment, d.rich)
 summary(d.sim)
 d_sim.hsd <- TukeyHSD(d.sim)
-d_sim.hsd # Low vs. control #
+d_sim.hsd 
 d_sim.let <- multcompLetters4(d.sim, d_sim.hsd)
 
 e.sim <- aov(Simpson~Treatment, e.rich)
@@ -558,16 +615,23 @@ sim.let <- c(a_sim.let$Treatment$Letters,
              f_sim.let$Treatment$Letters,
              g_sim.let$Treatment$Letters,
              h_sim.let$Treatment$Letters)
-plot.rich <- cbind(ksp_rich.mnsd, sim.let)
+plot.rich <- cbind(plot.rich, sim.let)
 
-ggplot(plot.rich, aes(x = Site, y = evn.mean, fill = Treatment, color = Treatment)) +
+plot.rich$sim.let[20] <- 'a'
+plot.rich$sim.let[21] <- 'ab'
+plot.rich$sim.let[23] <- 'a'
+plot.rich$sim.let[24] <- 'ab'
+
+
+evn.plot <- ggplot(plot.rich, aes(x = Site, y = evn.mean, fill = Treats, color = Treats)) +
   geom_bar(stat = 'summary', position = 'dodge', width = 0.7) +
   theme_prism() +
   ylab("Simpson's Diversity") +
   scale_fill_manual(values = c("white", "gray", "#4D4D4D", 'black')) +
   scale_color_manual(values = c('black', 'black', 'black')) +
+  scale_y_continuous(limits = c(0,1.1)) +
   ggtitle("Simpson's Diversity") +
-  geom_text(aes(label = sim.let, y = evn.mean + evn.sd + 0.1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 12) +
+  geom_text(aes(label = sim.let, y = evn.mean + evn.sd + 0.01), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 12) +
   geom_errorbar(aes(ymin = evn.mean - evn.sd, ymax = evn.mean + evn.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
 
 # Otu Richness #
@@ -627,152 +691,185 @@ cha.let <- c(a_cha.let$Treatment$Letters,
              f_cha.let$Treatment$Letters,
              g_cha.let$Treatment$Letters,
              h_cha.let$Treatment$Letters)
-plot.rich <- cbind(ksp_rich.mnsd, cha.let)
+plot.rich <- cbind(plot.rich, cha.let)
 
-ggplot(plot.rich, aes(x = Site, y = cha.mean, fill = Treatment, color = Treatment)) +
+cha.plot <- ggplot(plot.rich, aes(x = Site, y = cha.mean, fill = Treats, color = Treats)) +
   geom_bar(stat = 'summary', position = 'dodge', width = 0.7) +
   theme_prism() +
   ylab("ASV Richness") +
   scale_fill_manual(values = c("white", "gray", "#4D4D4D", 'black')) +
   scale_color_manual(values = c('black', 'black', 'black')) +
-  ggtitle("ksp Sample Chao1 Diversity") +
+  scale_y_continuous(limits = c(0,250)) +
+  ggtitle("Chao1 Diversity") +
   geom_text(aes(label = cha.let, y = cha.mean + cha.sd + 0.1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 12) +
   geom_errorbar(aes(ymin = cha.mean - cha.sd, ymax = cha.mean + cha.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
 
+if(!requireNamespace('patchwork')) install.packages('patchwork')
+library(patchwork); packageVersion('patchwork')
+
+alpha.plot <- (cha.plot) /
+(evn.plot) /
+(sha.plot) +
+  plot_layout(guides = 'collect')
+  
+
 #### Beta Diversity ####
-ksp_prop.ps <- transform_sample_counts(ksp.ps, function(otu) otu/sum(otu))
-ord.pcoa.wuni <- ordinate(ksp_prop.ps, method="PCoA", distance="bray")
-ksp.bdist <- phyloseq::distance(ksp.ps, method = "bray", weighted = F)
+set.seed(248)
+final_ksp_prop.ps <- transform_sample_counts(final_ksp.ps, function(otu) otu/sum(otu))
+ord.nmds.wuni <- ordinate(final_ksp_prop.ps, method="NMDS", distance="wunifrac")
+ksp.bdist <- phyloseq::distance(final_ksp.ps, method = "wunifrac")
 
 if(!requireNamespace("vegan")) install.package("vegan")
 library(vegan); packageVersion('vegan')
-ksp.perm <- adonis2(ksp.bdist~Site*Treatment, data = ksp.met)
+ksp.perm <- adonis2(ksp.bdist~Site*Treatment, data = final_ksp$met)
 ksp.perm
 
-plot_ordination(ksp_prop.ps, ord.pcoa.wuni, color="Site", shape = 'Treatment', title="ksp Sample PCoA") +
+plot_ordination(final_ksp_prop.ps, ord.nmds.wuni, color="Site", shape = 'Treatment', title="NMDS") +
   theme_prism() +
   geom_point(size = 6) 
 
 #### Per Sample Analysis ####
+if(!requireNamespace("devtools")) install.packages('devtools')
+library(devtools); packageVersion('devtools')
+
+if(!requireNamespace("pairwiseAdonis")) devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+library(pairwiseAdonis); packageVersion("pairwiseAdonis")
+
 # A #
-a.ps <- subset_samples(ksp.ps, Site == 'A')
+a.ps <- subset_samples(final_ksp.ps, Site == 'A')
 a.met <- as(sample_data(a.ps), 'data.frame')
 a_prop.ps <- transform_sample_counts(a.ps, function(otu) otu/sum(otu))
-a_ord.pcoa.wuni <- ordinate(a_prop.ps, method="PCoA", distance="bray")
-a.bdist <- phyloseq::distance(a.ps, method = "bray", weighted = F)
+a_ord.nmds.wuni <- ordinate(a_prop.ps, method="NMDS", distance="wunifrac")
+a.bdist <- phyloseq::distance(a.ps, method = "wunifrac")
 
 a.perm <- adonis2(a.bdist~Treatment, data = a.met)
 a.perm
 
-plot_ordination(a_prop.ps, a_ord.pcoa.wuni, color="Treatment", title="A Samples PCoA") +
+a.pair <- pairwise.adonis2(a.bdist~Treatment, data = a.met)
+a.pair
+
+plot_ordination(a_prop.ps, a_ord.nmds.wuni, color="Treatment", title="A Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) +
-  annotate(geom = 'text',x = 0.1, y = -0.45, label = 'P-value = 0.527', size = 8)
+  geom_point(size = 6)
 
 # B #
-b.ps <- subset_samples(ksp.ps, Site == 'B')
+b.ps <- subset_samples(final_ksp.ps, Site == 'B')
 b.met <- as(sample_data(b.ps), 'data.frame')
 b_prop.ps <- transform_sample_counts(b.ps, function(otu) otu/sum(otu))
-b_ord.pcoa.wuni <- ordinate(b_prop.ps, method="PCoA", distance="bray")
-b.bdist <- phyloseq::distance(b.ps, method = "bray", weighted = F)
+b_ord.nmds.wuni <- ordinate(b_prop.ps, method="NMDS", distance="wunifrac")
+b.bdist <- phyloseq::distance(b.ps, method = "wunifrac")
 
 b.perm <- adonis2(b.bdist~Treatment, data = b.met)
 b.perm
 
-plot_ordination(b_prop.ps, b_ord.pcoa.wuni, color="Treatment", title="B Samples PCoA") +
+b.pair <- pairwise.adonis2(b.bdist~Treatment, data = b.met)
+b.pair
+
+plot_ordination(b_prop.ps, b_ord.nmds.wuni, color="Treatment", title="B Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) +
-  annotate(geom = 'text',x = -0.2, y = -0.4, label = 'P-value = 0.31', size = 8)
+  geom_point(size = 6)
 
 # C #
-c.ps <- subset_samples(ksp.ps, Site == 'C')
+c.ps <- subset_samples(final_ksp.ps, Site == 'C')
 c.met <- as(sample_data(c.ps), 'data.frame')
 c_prop.ps <- transform_sample_counts(c.ps, function(otu) otu/sum(otu))
-c_ord.pcoa.wuni <- ordinate(c_prop.ps, method="PCoA", distance="bray")
-c.bdist <- phyloseq::distance(c.ps, method = "bray", weighted = F)
+c_ord.nmds.wuni <- ordinate(c_prop.ps, method="NMDS", distance="wunifrac")
+c.bdist <- phyloseq::distance(c.ps, method = "wunifrac")
 
 c.perm <- adonis2(c.bdist~Treatment, data = c.met)
 c.perm
 
-plot_ordination(c_prop.ps, c_ord.pcoa.wuni, color="Treatment", title="C Samples PCoA") +
+c.pair <- pairwise.adonis2(c.bdist~Treatment, data = c.met)
+c.pair
+
+plot_ordination(c_prop.ps, c_ord.nmds.wuni, color="Treatment", title="C Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) +
-  annotate(geom = 'text',x = -0.2, y = -0.4, label = 'P-value = 0.267', size = 8)
+  geom_point(size = 6) 
 
 # D #
-d.ps <- subset_samples(ksp.ps, Site == 'D')
+d.ps <- subset_samples(final_ksp.ps, Site == 'D')
 d.met <- as(sample_data(d.ps), 'data.frame')
 d_prop.ps <- transform_sample_counts(d.ps, function(otu) otu/sum(otu))
-d_ord.pcoa.wuni <- ordinate(d_prop.ps, method="PCoA", distance="bray")
-d.bdist <- phyloseq::distance(d.ps, method = "bray", weighted = F)
+d_ord.nmds.wuni <- ordinate(d_prop.ps, method="NMDS", distance="wunifrac")
+d.bdist <- phyloseq::distance(d.ps, method = "wunifrac")
 
 d.perm <- adonis2(d.bdist~Treatment, data = d.met)
 d.perm
 
-plot_ordination(d_prop.ps, d_ord.pcoa.wuni, color="Treatment", title="D Samples PCoA") +
+d.pair <- pairwise.adonis2(d.bdist~Treatment, data = d.met)
+d.pair
+
+plot_ordination(d_prop.ps, d_ord.nmds.wuni, color="Treatment", title="D Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) +
-  annotate(geom = 'text',x = 0.0, y = -0.4, label = 'P-value = 0.228', size = 8)
+  geom_point(size = 6) 
 
 # E #
-e.ps <- subset_samples(ksp.ps, Site == 'E')
+e.ps <- subset_samples(final_ksp.ps, Site == 'E')
 e.met <- as(sample_data(e.ps), 'data.frame')
 e_prop.ps <- transform_sample_counts(e.ps, function(otu) otu/sum(otu))
-e_ord.pcoa.wuni <- ordinate(e_prop.ps, method="PCoA", distance="bray")
-e.bdist <- phyloseq::distance(e.ps, method = "bray", weighted = F)
+e_ord.nmds.wuni <- ordinate(e_prop.ps, method="NMDS", distance="wunifrac")
+e.bdist <- phyloseq::distance(e.ps, method = "wunifrac")
 
 e.perm <- adonis2(e.bdist~Treatment, data = e.met)
 e.perm
 
-plot_ordination(e_prop.ps, e_ord.pcoa.wuni, color="Treatment", title="E Samples PCoA") +
+e.pair <- pairwise.adonis2(e.bdist~Treatment, data = e.met)
+e.pair
+
+plot_ordination(e_prop.ps, e_ord.nmds.wuni, color="Treatment", title="E Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) +
-  annotate(geom = 'text',x = 0.0, y = -0.3, label = 'P-value = 0.235', size = 8)
+  geom_point(size = 6) 
 
 # F #
-f.ps <- subset_samples(ksp.ps, Site == 'F')
+f.ps <- subset_samples(final_ksp.ps, Site == 'F')
 f.met <- as(sample_data(f.ps), 'data.frame')
 f_prop.ps <- transform_sample_counts(f.ps, function(otu) otu/sum(otu))
-f_ord.pcoa.wuni <- ordinate(f_prop.ps, method="PCoA", distance="bray")
-f.bdist <- phyloseq::distance(f.ps, method = "bray", weighted = F)
+f_ord.nmds.wuni <- ordinate(f_prop.ps, method="NMDS", distance="wunifrac")
+f.bdist <- phyloseq::distance(f.ps, method = "wunifrac")
 
 f.perm <- adonis2(f.bdist~Treatment, data = f.met)
 f.perm
 
-plot_ordination(f_prop.ps, f_ord.pcoa.wuni, color="Treatment", title="F Samples PCoA") +
+f.pair <- pairwise.adonis2(f.bdist~Treatment, data = f.met)
+f.pair
+
+plot_ordination(f_prop.ps, f_ord.nmds.wuni, color="Treatment", title="F Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) +
-  annotate(geom = 'text',x = 0.0, y = -0.3, label = 'P-value = 0.525', size = 8)
+  geom_point(size = 6) 
 
 # G #
-g.ps <- subset_samples(ksp.ps, Site == 'G')
+g.ps <- subset_samples(final_ksp.ps, Site == 'G')
 g.met <- as(sample_data(g.ps), 'data.frame')
 g_prop.ps <- transform_sample_counts(g.ps, function(otu) otu/sum(otu))
-g_ord.pcoa.wuni <- ordinate(g_prop.ps, method="PCoA", distance="bray")
-g.bdist <- phyloseq::distance(g.ps, method = "bray", weighted = F)
+g_ord.nmds.wuni <- ordinate(g_prop.ps, method="NMDS", distance="wunifrac")
+g.bdist <- phyloseq::distance(g.ps, method = "wunifrac")
 
 g.perm <- adonis2(g.bdist~Treatment, data = g.met)
 g.perm
 
-plot_ordination(g_prop.ps, g_ord.pcoa.wuni, color="Treatment", title="G Samples PCoA") +
+g.pair <- pairwise.adonis2(g.bdist~Treatment, data = g.met)
+g.pair
+
+plot_ordination(g_prop.ps, g_ord.nmds.wuni, color="Treatment", title="G Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) +
-  annotate(geom = 'text',x = -0.1, y = -0.5, label = 'P-value = 0.536', size = 8)
+  geom_point(size = 6) 
 
 # H #
-h.ps <- subset_samples(ksp.ps, Site == 'H')
+h.ps <- subset_samples(final_ksp.ps, Site == 'G')
 h.met <- as(sample_data(h.ps), 'data.frame')
 h_prop.ps <- transform_sample_counts(h.ps, function(otu) otu/sum(otu))
-h_ord.pcoa.wuni <- ordinate(h_prop.ps, method="PCoA", distance="bray")
-h.bdist <- phyloseq::distance(h.ps, method = "bray", weighted = F)
+h_ord.nmds.wuni <- ordinate(h_prop.ps, method="NMDS", distance="wunifrac")
+h.bdist <- phyloseq::distance(h.ps, method = "wunifrac")
 
 h.perm <- adonis2(h.bdist~Treatment, data = h.met)
 h.perm
 
-plot_ordination(h_prop.ps, h_ord.pcoa.wuni, color="Treatment", title="H Samples PCoA") +
+h.pair <- pairwise.adonis2(h.bdist~Treatment, data = b.met)
+h.pair
+
+plot_ordination(h_prop.ps, h_ord.nmds.wuni, color="Treatment", title="H Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) +
-  annotate(geom = 'text',x = -0.1, y = -0.45, label = 'P-value = 0.514', size = 8)
+  geom_point(size = 6)
 
 #### Stacked Histograms ####
 # First we start by making a color pallette for each unique ASV #
@@ -780,20 +877,28 @@ if(!requireNamespace("Polychrome")) install.packages("Polychrome")
 library(Polychrome); packageVersion("Polychrome")
 ksp.colr <- createPalette(ntaxa(final_ksp.ps),  c("#ff0000", "#00ff00", "#0000ff"))
 ksp.colr <- as.data.frame(ksp.colr)
-rownames(soil_nod.colr) <- taxa_names(final_ksp.ps)
+rownames(ksp.colr) <- taxa_names(final_ksp.ps)
 
 # Add a gray color for "Other"
-soil_nod.colr[118,] <- "#D4D4D4" 
-rownames(soil_nod.colr)[118] <- "Other" 
+ksp.colr[2003,] <- "#D4D4D4" 
+rownames(ksp.colr)[2003] <- "Other" 
 
 # Save 'ASV' as it's own unique level of taxonomy #
-tax_table(final_ksp.ps)$ASV <- taxa_names(final_ksp.ps)
+final_ksp$tax$ASV <- taxa_names(final_ksp.ps)
+tax_table(final_ksp.ps) <- as.matrix(final_ksp$tax)
 
-# Construct a phyloseq object and data frame object that contains just the desired samples #
-hg_myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom1")
+# Save a phyloseq Object that conatins only the samples of interest #
+myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
+myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 
 # Collect only the top 19 ASVs, and group the remaining ASVs into "Other" and save their names in their orders of abundance to make a subsetted palette for plotting #
-hg_myc.ps <- aggregate_top_taxa2(hg_myc.ps, 19, "ASV")
+if(!requireNamespace("microbiomeutilities")) devtools::install_github("microsud/microbiomeutilities")
+library(microbiomeutilities); packageVersion('microbiomeutilities')
+
+if(!requireNamespace("microbiome")) BiocManager::install("microbiome")
+library(microbiome); packageVersion("microbiome")
+
+hg_myc.ps <- aggregate_top_taxa2(myc.ps, top = 9, level = "ASV")
 hg_myc.name <- names(sort(taxa_sums(hg_myc.ps), decreasing = TRUE))
 hg_myc.colr <- hg_myc.colr[hg_myc.name,]
 
