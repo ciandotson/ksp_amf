@@ -76,7 +76,7 @@ for.fp <- for_reads
 list.files(for.fp)
 
 # As a sanity check, add the file paths to the metadata data.frame and make sure the filepaths align to the sample names #
-ksp.met$Forward <- for.fp
+ksp.met$Forward <- list.files(for.fp)
 sample.names <- rownames(ksp.met)
 
 #### Trimming Primers Using cutadapt ####
@@ -143,7 +143,7 @@ for(i in seq_along(list.files(for.fp))){
 }
 
 ## Checking to make sure all of the primers were trimmed ##
-t.hits <- matrix(data = c(0,0,0,0),nrow=1, ncol =4)
+t.hits <- matrix(data = c(0,0,0,0),nrow=1, ncol = 4)
 t.hits <- as.data.frame(t.hits)
 
 for(i in 1:length(forcut.fp)){
@@ -181,10 +181,13 @@ ksp.st <- makeSequenceTable(for.dada)
 # Chimeras, or artifacts of DNA amplification and/or sequencing, can be simply removed using the below command
 nochim_ksp.st <- removeBimeraDenovo(ksp.st, method = 'consensus', multithread = TRUE, verbose = TRUE)
 
+# Save the ASV table to a new .RData object that will serve as the abridged data produced by this pipeline #
 save(nochim_ksp.st, file = "./abridged.RData")
 
+# Do the same thing for the metadata #
 if(!requireNamespace('cgwtools')) install.packages('cgwtools')
 library(cgwtools); packageVersion('cgwtools')
+
 resave(ksp.met, file = "./abridged.RData")
 
 # Finally, we can track how many reads passed each step of the pipeline with the code below #
@@ -192,6 +195,8 @@ getN <- function(x) sum(getUniques(x))
 final.track <- cbind(prefilt.track[,1], prefilt.track[,2], postfilt.track[,2], sapply(for.dada, getN), colSums(nochim_ksp.st))
 colnames(final.track) <- c("pre-cutadapt", "post-cutadapt", "filtered", "denoised", "nonchim")
 final.track <- as.data.frame(final.track)
+
+resave(final.track, file = 'abridged.RData')
 
 #### Assigning Taxonomy ####
 # To assign taxonomy, we use the MaarJAM database as a reference that has been adapted to be read by dada2 #
@@ -205,6 +210,7 @@ ksp.taxa <- as.matrix(ksp.taxa)
 # make sure the rownames of the metadata tables matches the column names of the ASV table #
 rownames(nochim_ksp.st) <- rownames(ksp.met)
 
+# Save the taxonomy table to the abridged .RData file #
 resave(ksp.taxa, file = "./abridged.RData")
 save.image("./ksp_amf.RData")
 
@@ -225,8 +231,6 @@ nochim_ksp.st <- t(nochim_ksp.st)
 raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
                        tax_table(ksp.taxa),
                        sample_data(ksp.met))
-
-resave(raw_ksp.ps, file = "./abridged.RData")
 
 # Filter out samples that did not have any matches to the MaarJAM database #
 raw_ksp.ps <- subset_taxa(raw_ksp.ps, !is.na(Family))
@@ -249,13 +253,6 @@ for(i in 1:nrow(raw_ksp.tax)){
     taxa_names(raw_ksp.ps)[i] <- paste0(taxa_names(raw_ksp.ps)[i], '(', raw_ksp.tax$Family[i], ')')
   }
 }
-
-# Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
-myc.ps <- subset_samples(raw_ksp.ps, Treatment == "MycoBloom")
-myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
-myc_prop.ps <- transform_sample_counts(myc.ps, function(x) x/sum(x))
-
-resave(myc.ps, file = "./abridged.RData")
 
 # This function below is a handy tool that decomposes phyloseq objects to a list of data.frames that make the data more easily manipulated and available, especially for seeing #
 # how taxonomy may be related to abundance when we look at the "fra" data.frames (short for Frankenstein as it is just the ASV table appended to the taxonomy table) #
@@ -293,8 +290,6 @@ decompose_ps(raw_ksp.ps, "raw_ksp")
 # ("tax" for taxonomy table, "otu" for asv table, "met" for metadata table, "dna" for DNAStringSet, and "fra" for the Frankenstein table) #
 raw_ksp$fra
 
-resave(raw_ksp, file = "./abridged.RData")
-
 #### Taxonomy Validation ####
 # Here we blast all of the sequences we have returned and make sure that the asvs we get back actually correspond to something that is at least mostly fungal #
 if(!requireNamespace("rBLAST")) BiocManager::install("rBLAST")
@@ -328,7 +323,7 @@ write.table(filt_ksp.tax$Best_Hit, './blast_hits/ksp_blast_hits.txt')
 # Call the python script to retrieve the taxonomies of the matched entries #
 system('python3 ~/ksp_amf/SSU_BLAST.py -i ./blast_hits/ksp_blast_hits.txt -o ./blast_hits/ksp_ncbi_hits.csv')
 
-# Read in the output from the python script and make new taxonomy table "s_ncbi_fin.tax" #
+# Read in the output from the python script and make new taxonomy table "ksp_ncbi_fin.tax" #
 ksp_ncbi.taxa <- read.csv2('./blast_hits/ksp_ncbi_hits.csv', header = FALSE, fill = TRUE)
 ksp_ncbi.int <- strsplit(as.character(ksp_ncbi.taxa$V1), ",")
 ksp_ncbi_fin.tax <- do.call(rbind, lapply(ksp_ncbi.int, function(x) { length(x) <- max(sapply(ksp_ncbi.int, length)); x }))
@@ -340,15 +335,15 @@ ksp.ps <- subset_taxa(raw_ksp.ps, taxa_names(raw_ksp.ps) %in% rownames(double_ks
 tax_table(ksp.ps) <- as.matrix(double_ksp.tax)
 
 # Filter out ASVs that correspond to non-fungal targets #
-final_ksp.ps <- subset_taxa(ksp.ps, X2 == "Fungi")
+fun_ksp.ps <- subset_taxa(ksp.ps, X2 == "Fungi")
 
 #### Phylogenetic Tree Construction for Soils ####
 # Add Outgroups to the data to try and catch any non-AMF reads that have made it through #
-decompose_ps(final_ksp.ps, 'final_ksp')
+decompose_ps(fun_ksp.ps, 'fun_ksp')
 out.rna <- readRNAStringSet('./reference/outgroup.fasta')
 out.dna <- DNAStringSet(out.rna)
 names(out.dna) <- c("Outgroup1", "Outgroup2")
-tree.dna <- c(final_ksp$dna, out.dna)
+tree.dna <- c(fun_ksp$dna, out.dna)
 
 # Output the reads into a fasta file #
 writeXStringSet(tree.dna, "./reads/ksp_input.fasta")
@@ -370,7 +365,7 @@ ksp.tre <- read.tree("./reads/ksp_aligned.fasta.treefile")
 ksp.tre$tip.label <- sub("^(ASV[0-9]+)_([^_]+)_$", "\\1(\\2)", ksp.tre$tip.label)
 
 # Save the tree into the phyloseq object #
-phy_tree(final_ksp.ps) <- ksp.tre
+phy_tree(fun_ksp.ps) <- ksp.tre
 
 # Now we can actually do the filtering using the tree by first labelling our outgroups #
 out.nam <- c("Outgroup1", "Outgroup2")
@@ -383,15 +378,15 @@ out.des <- getDescendants(ksp.tre, out.mrca)
 out.tip <- ksp.tre$tip.label[out.des[out.des <= length(ksp.tre$tip.label)]]
 
 # Finally, remove the taxa denoted in the tips denoted in out.tip from the phyloseq object #
-final_ksp.ps <- subset_taxa(final_ksp.ps, !taxa_names(final_ksp.ps) %in% out.tip)
+fun_ksp.ps <- subset_taxa(fun_ksp.ps, !taxa_names(fun_ksp.ps) %in% out.tip)
 
 # Remove the control samples #
-final_ksp.ps <- subset_samples(final_ksp.ps, Treatment != "TC")
-final_ksp.ps <- subset_taxa(final_ksp.ps, taxa_sums(final_ksp.ps) > 0)
+fun_ksp.ps <- subset_samples(fun_ksp.ps, Treatment != "TC")
+fun_ksp.ps <- subset_taxa(fun_ksp.ps, taxa_sums(fun_ksp.ps) > 0)
 
 # To give us the option to remove half of the control samples ofr the sake of having balanced statitsical tests, I have made this function to remove one of each replicate. #
 # The decsion for a replicate to be selected is based purely on the number of reads the replicate has, with the sample with higher reads being selected. #
-con.ps <- subset_samples(final_ksp.ps, Treatment == "Control")
+con.ps <- subset_samples(fun_ksp.ps, Treatment == "Control")
 decompose_ps(con.ps, 'con')
 con$met$Reads <- colSums(con$otu)
 remn.met <- c()
@@ -406,8 +401,8 @@ for(i in LETTERS[1:8]){
 }
 
 # Save only the control samples that are NOT found in the list #
-fin_ksp.ps <- subset_samples(final_ksp.ps, !sample_names(final_ksp.ps) %in% rownames(remn.met))
-final_ksp.ps <- subset_taxa(fin_ksp.ps, taxa_sums(fin_ksp.ps) > 0)
+final_ksp.ps <- subset_samples(fun_ksp.ps, !sample_names(fun_ksp.ps) %in% rownames(remn.met))
+final_ksp.ps <- subset_taxa(final_ksp.ps, taxa_sums(final_ksp.ps) > 0)
 
 # Rename taxa so they correspond to their new ordering based on abundance; also, make a new column for each lowest classification #
 taxa_names(final_ksp.ps) <- paste0("ASV", seq(ntaxa(final_ksp.ps)))
@@ -431,13 +426,13 @@ for(i in 1:nrow(final_ksp.tax)){
 rownames(final_ksp.tax) <- taxa_names(final_ksp.ps)
 tax_table(final_ksp.ps) <- as.matrix(final_ksp.tax)[,c("Family", "Genus", "Species", "Final", "ASV")]
 
+# Aggregate all taxa to the level of "Final" (what is found in the parentheses of the taxa names) #
 if(!requireNamespace("microbiome")) BiocManager::install("microbiome")
 library(microbiome); packageVersion("microbiome")
-
 spec_ksp.ps <- aggregate_taxa(final_ksp.ps, level = "Final")
 spec_ksp.ps <- subset_taxa(spec_ksp.ps, taxa_sums(spec_ksp.ps) > 0)
 
-
+# Resave the phyloseq in order of abundance #
 decompose_ps(spec_ksp.ps, 'spec_ksp')
 spec_ksp$otu <- arrange(spec_ksp$otu, desc(rowSums(spec_ksp$otu)))
 spec_ksp$tax <- spec_ksp$tax[rownames(spec_ksp$otu),] 
@@ -446,12 +441,17 @@ spec_ksp.ps <- phyloseq(otu_table(spec_ksp$otu, taxa_are_rows = TRUE),
                         tax_table(as.matrix(spec_ksp$tax)),
                         sample_data(spec_ksp$met))
 
+# Rename the taxa in order of abundance #
 for(i in 1:ntaxa(spec_ksp.ps)){
   taxa_names(spec_ksp.ps)[i] <- paste0('ASV', i, '(', tax_table(spec_ksp.ps)[i, 4], ')')}
 
+# Save the column "ASV" in the taxa table to correspond to the taxa_names #
 for(i in 1:ntaxa(spec_ksp.ps)){
   tax_table(spec_ksp.ps)[i,"ASV"] <- taxa_names(spec_ksp.ps)[i] 
 }
+
+# Decompose the final phyloseq object (spec_ksp.ps) #
+decompose_ps(spec_ksp.ps, 'spec_ksp')
 
 # Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
 myc.ps <- subset_samples(spec_ksp.ps, Treatment == "MycoBloom")
@@ -459,7 +459,11 @@ myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 decompose_ps(myc.ps, 'myc')
 myc$fra <- arrange(myc$fra, desc(myc$fra$MycoBloom1))
 
-save.image("ksp_amf.RData")
+# Save the final and mycbloom phyloseq and decomposed phyloseq objects to abridged.RData #
+resave(myc.ps, file = './abridged.RData')
+resave(myc, file = './abridged.RData')
+resave(spec_ksp.ps, file = './abridged.RData')
+resave(spec_ksp, file = './abridged.RData')
 
 #### Alpha Diversity Measurement and Visualization ####
 ksp.rich <- estimate_richness(spec_ksp.ps) # automatically performs alpha diversity calculations #
@@ -467,30 +471,35 @@ ksp.rich <- cbind(final_ksp$met, ksp.rich)
 myc.rich <- filter(ksp.rich, Treatment == "MycoBloom")
 ksp.rich <- filter(ksp.rich, Treatment != "MycoBloom")
 
+resave(ksp.rich, file = './abridged.RData')
+
 # ANOVA for each kind of alpha diversity #
 if(!requireNamespace("car")) install.packages("car")
 library(car); packageVersion("car")
 
 # Perform the ANOVA and normality and variance tests #
 ksp.sha <- aov(Shannon ~ Site*Treatment, ksp.rich) 
-summary(ksp.sha)
+ksp_sha.sum <- summary(ksp.sha)
 ksp_sha.hsd <- TukeyHSD(ksp.sha)
 shapiro.test(residuals(ksp.sha))
 leveneTest(ksp.sha)
+resave(ksp_sha.sum, file = './abridged.RData')
 
 # Perform the ANOVA and normality and variance tests #
 ksp.sim <- aov(Simpson ~ Site*Treatment, ksp.rich) 
-summary(ksp.sim)
+ksp_sim.sum <- summary(ksp.sim)
 ksp_sim.hsd <- TukeyHSD(ksp.sim)
 shapiro.test(residuals(ksp.sim))
 leveneTest(ksp.sim)
+resave(ksp_sim.sum, file = './abridged.RData')
 
 # Perform the ANOVA and normality and variance tests #
 ksp.cha <- aov(Chao1 ~ Site*Treatment, ksp.rich) 
-summary(ksp.cha)
+ksp_cha.sum <- summary(ksp.cha)
 ksp_cha.hsd <- TukeyHSD(ksp.cha)
 shapiro.test(residuals(ksp.cha))
 leveneTest(ksp.cha)
+resave(ksp_cha.sum, file = './abridged.RData')
 
 # Find the mean and standard deviation of each grouping #
 if(!requireNamespace('ggprism')) install.packages('ggprism')
@@ -535,52 +544,68 @@ if(!requireNamespace("multcompView")) install.packages("multcompView")
 library(multcompView); packageVersion('multcompView')
 
 a.sha <- aov(Shannon~Treatment, a.rich)
-summary(a.sha)
+a_sha.sum <- summary(a.sha)
 a_sha.hsd <- TukeyHSD(a.sha)
 a_sha.hsd
 a_sha.let <- multcompLetters4(a.sha, a_sha.hsd)
+resave(a_sha.sum, file = './abridged.RData')
+resave(a_sha.hsd, file = './abridged.RData')
 
 b.sha <- aov(Shannon~Treatment, b.rich)
-summary(b.sha)
+b.sha_sum <- summary(b.sha)
 b_sha.hsd <- TukeyHSD(b.sha)
 b_sha.hsd
 b_sha.let <- multcompLetters4(b.sha, b_sha.hsd)
+resave(b_sha.sum, file = './abridged.RData')
+resave(b_sha.hsd, file = './abridged.RData')
 
 c.sha <- aov(Shannon~Treatment, c.rich)
-summary(c.sha)
+c_sha.sum <- summary(c.sha)
 c_sha.hsd <- TukeyHSD(c.sha)
 c_sha.hsd
 c_sha.let <- multcompLetters4(c.sha, c_sha.hsd)
+resave(c_sha.sum, file = './abridged.RData')
+resave(c_sha.hsd, file = './abridged.RData')
 
 d.sha <- aov(Shannon~Treatment, d.rich)
-summary(d.sha)
+d_sha.sum <- summary(d.sha)
 d_sha.hsd <- TukeyHSD(d.sha)
 d_sha.hsd
 d_sha.let <- multcompLetters4(d.sha, d_sha.hsd)
+resave(d_sha.sum, file = './abridged.RData')
+resave(d_sha.hsd, file = './abridged.RData')
 
 e.sha <- aov(Shannon~Treatment, e.rich)
-summary(e.sha)
+e_sha.sum <- summary(e.sha)
 e_sha.hsd <- TukeyHSD(e.sha)
 e_sha.hsd
 e_sha.let <- multcompLetters4(e.sha, e_sha.hsd)
+resave(e_sha.sum, file = './abridged.RData')
+resave(e_sha.hsd, file = './abridged.RData')
 
 f.sha <- aov(Shannon~Treatment, f.rich)
-summary(f.sha)
+f_sha.sum <- summary(f.sha)
 f_sha.hsd <- TukeyHSD(f.sha)
 f_sha.hsd
 f_sha.let <- multcompLetters4(f.sha, f_sha.hsd)
+resave(f_sha.sum, file = './abridged.RData')
+resave(f_sha.hsd, file = './abridged.RData')
 
 g.sha <- aov(Shannon~Treatment, g.rich)
-summary(g.sha)
+g_sha.sum <- summary(g.sha)
 g_sha.hsd <- TukeyHSD(g.sha)
 g_sha.hsd
 g_sha.let <- multcompLetters4(g.sha, g_sha.hsd)
+resave(g_sha.sum, file = './abridged.RData')
+resave(g_sha.hsd, file = './abridged.RData')
 
 h.sha <- aov(Shannon~Treatment, h.rich)
-summary(h.sha)
+h_sha.sum <- summary(h.sha)
 h_sha.hsd <- TukeyHSD(h.sha)
 h_sha.hsd
 h_sha.let <- multcompLetters4(h.sha, h_sha.hsd)
+resave(h_sha.sum, file = './abridged.RData')
+resave(h_sha.hsd, file = './abridged.RData')
 
 sha.let <- c(a_sha.let$Treatment$Letters,
              b_sha.let$Treatment$Letters,
@@ -614,54 +639,72 @@ sha.plot <- ggplot(plot.rich, aes(x = Site, y = sha.mean, fill = Treats, color =
   geom_text(aes(label = sha.let, y = sha.mean + sha.sd + 0.1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
   geom_errorbar(aes(ymin = sha.mean - sha.sd, ymax = sha.mean + sha.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
 
+resave(sha.plot, file = './abridged.RData')
+
 # Simpson Diversity #
 a.sim <- aov(Simpson~Treatment, a.rich)
-summary(a.sim)
+a_sim.sum <- summary(a.sim)
 a_sim.hsd <- TukeyHSD(a.sim)
 a_sim.hsd
 a_sim.let <- multcompLetters4(a.sim, a_sim.hsd)
+resave(a_sim.sum, file = './abridged.RData')
+resave(a_sim.hsd, file = './abridged.RData')
 
 b.sim <- aov(Simpson~Treatment, b.rich)
-summary(b.sim)
+b_sim.sum <- summary(b.sim)
 b_sim.hsd <- TukeyHSD(b.sim)
 b_sim.hsd
 b_sim.let <- multcompLetters4(b.sim, b_sim.hsd)
+resave(b_sim.sum, file = './abridged.RData')
+resave(b_sim.hsd, file = './abridged.RData')
 
 c.sim <- aov(Simpson~Treatment, c.rich)
-summary(c.sim)
+c_sim.sum <- summary(c.sim)
 c_sim.hsd <- TukeyHSD(c.sim)
 c_sim.hsd
 c_sim.let <- multcompLetters4(c.sim, c_sim.hsd)
+resave(c_sim.sum, file = './abridged.RData')
+resave(c_sim.hsd, file = './abridged.RData')
 
 d.sim <- aov(Simpson~Treatment, d.rich)
-summary(d.sim)
+d_sim.sum <- summary(d.sim)
 d_sim.hsd <- TukeyHSD(d.sim)
 d_sim.hsd 
 d_sim.let <- multcompLetters4(d.sim, d_sim.hsd)
+resave(d_sim.sum, file = './abridged.RData')
+resave(d_sim.hsd, file = './abridged.RData')
 
 e.sim <- aov(Simpson~Treatment, e.rich)
-summary(e.sim)
+e_sim.sum <- summary(e.sim)
 e_sim.hsd <- TukeyHSD(e.sim)
 e_sim.hsd
 e_sim.let <- multcompLetters4(e.sim, e_sim.hsd)
+resave(e_sim.sum, file = './abridged.RData')
+resave(e_sim.hsd, file = './abridged.RData')
 
 f.sim <- aov(Simpson~Treatment, f.rich)
-summary(f.sim)
+f_sim.sum <- summary(f.sim)
 f_sim.hsd <- TukeyHSD(f.sim)
 f_sim.hsd
 f_sim.let <- multcompLetters4(f.sim, f_sim.hsd)
+resave(f_sim.sum, file = './abridged.RData')
+resave(f_sim.hsd, file = './abridged.RData')
 
 g.sim <- aov(Simpson~Treatment, g.rich)
-summary(g.sim)
+g_sim.sum <- summary(g.sim)
 g_sim.hsd <- TukeyHSD(g.sim)
 g_sim.hsd
 g_sim.let <- multcompLetters4(g.sim, g_sim.hsd)
+resave(g_sim.sum, file = './abridged.RData')
+resave(g_sim.hsd, file = './abridged.RData')
 
 h.sim <- aov(Simpson~Treatment, h.rich)
-summary(h.sim)
+h_sim.sum <- summary(h.sim)
 h_sim.hsd <- TukeyHSD(h.sim)
 h_sim.hsd
 h_sim.let <- multcompLetters4(h.sim, h_sim.hsd)
+resave(h_sim.sum, file = './abridged.RData')
+resave(h_sim.hsd, file = './abridged.RData')
 
 sim.let <- c(a_sim.let$Treatment$Letters,
              b_sim.let$Treatment$Letters,
@@ -695,54 +738,72 @@ evn.plot <- ggplot(plot.rich, aes(x = Site, y = evn.mean, fill = Treats, color =
   geom_text(aes(label = sim.let, y = evn.mean + evn.sd + 0.01), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
   geom_errorbar(aes(ymin = evn.mean - evn.sd, ymax = evn.mean + evn.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
 
+resave(evn.plot, file = './abridged.RData')
+
 # Otu Richness #
 a.cha <- aov(Chao1~Treatment, a.rich)
-summary(a.cha)
+a_cha.sum <- summary(a.cha)
 a_cha.hsd <- TukeyHSD(a.cha)
 a_cha.hsd
 a_cha.let <- multcompLetters4(a.cha, a_cha.hsd)
+resave(a_cha.sum, file = './abridged.RData')
+resave(a_cha.hsd, file = './abridged.RData')
 
 b.cha <- aov(Chao1~Treatment, b.rich)
-summary(b.cha)
+b_cha.sum <- summary(b.cha)
 b_cha.hsd <- TukeyHSD(b.cha)
 b_cha.hsd
 b_cha.let <- multcompLetters4(b.cha, b_cha.hsd)
+resave(b_cha.sum, file = './abridged.RData')
+resave(b_cha.hsd, file = './abridged.RData')
 
 c.cha <- aov(Chao1~Treatment, c.rich)
-summary(c.cha)
+c_cha.sum <- summary(c.cha)
 c_cha.hsd <- TukeyHSD(c.cha)
 c_cha.hsd
 c_cha.let <- multcompLetters4(c.cha, c_cha.hsd)
+resave(c_cha.sum, file = './abridged.RData')
+resave(c_cha.hsd, file = './abridged.RData')
 
 d.cha <- aov(Chao1~Treatment, d.rich)
-summary(d.cha)
+d_cha.sum <- summary(d.cha)
 d_cha.hsd <- TukeyHSD(d.cha)
 d_cha.hsd # Low vs. control #
 d_cha.let <- multcompLetters4(d.cha, d_cha.hsd)
+resave(d_cha.sum, file = './abridged.RData')
+resave(d_cha.hsd, file = './abridged.RData')
 
 e.cha <- aov(Chao1~Treatment, e.rich)
-summary(e.cha)
+e_cha.sum <- summary(e.cha)
 e_cha.hsd <- TukeyHSD(e.cha)
 e_cha.hsd
 e_cha.let <- multcompLetters4(e.cha, e_cha.hsd)
+resave(e_cha.sum, file = './abridged.RData')
+resave(e_cha.hsd, file = './abridged.RData')
 
 f.cha <- aov(Chao1~Treatment, f.rich)
-summary(f.cha)
+f_cha.sum <- summary(f.cha)
 f_cha.hsd <- TukeyHSD(f.cha)
 f_cha.hsd
 f_cha.let <- multcompLetters4(f.cha, f_cha.hsd)
+resave(f_cha.sum, file = './abridged.RData')
+resave(f_cha.hsd, file = './abridged.RData')
 
 g.cha <- aov(Chao1~Treatment, g.rich)
-summary(g.cha)
+g_cha.sum <- summary(g.cha)
 g_cha.hsd <- TukeyHSD(g.cha)
 g_cha.hsd
 g_cha.let <- multcompLetters4(g.cha, g_cha.hsd)
+resave(g_cha.sum, file = './abridged.RData')
+resave(g_cha.hsd, file = './abridged.RData')
 
 h.cha <- aov(Chao1~Treatment, h.rich)
-summary(h.cha)
+h_cha.sum <- summary(h.cha)
 h_cha.hsd <- TukeyHSD(h.cha)
 h_cha.hsd
 h_cha.let <- multcompLetters4(h.cha, h_cha.hsd)
+resave(h_cha.sum, file = './abridged.RData')
+resave(h_cha.hsd, file = './abridged.RData')
 
 cha.let <- c(a_cha.let$Treatment$Letters,
              b_cha.let$Treatment$Letters,
@@ -763,7 +824,7 @@ plot.rich$cha.let[22] <- 'b'
 plot.rich$cha.let[23] <- 'a'
 plot.rich$cha.let[24] <- 'b'
 
-
+resave(plot.rich, file = './abridged.RData')
 
 cha.plot <- ggplot(plot.rich, aes(x = Site, y = cha.mean, fill = Treats, color = Treats)) +
   geom_bar(stat = 'summary', position = 'dodge', width = 0.7) +
@@ -776,6 +837,8 @@ cha.plot <- ggplot(plot.rich, aes(x = Site, y = cha.mean, fill = Treats, color =
   geom_text(aes(label = cha.let, y = cha.mean + cha.sd + 1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
   geom_errorbar(aes(ymin = cha.mean - cha.sd, ymax = cha.mean + cha.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
 
+resave(cha.plot, file = "./abridged.RData")
+
 if(!requireNamespace('patchwork')) install.packages('patchwork')
 library(patchwork); packageVersion('patchwork')
 
@@ -786,7 +849,8 @@ alpha.plot <- (cha.plot) /
   theme(legend.position = 'bottom',
         legend.key.spacing.x = unit(3, 'cm'),
         legend.text = element_text(size = 18, color = 'black', face = 'bold', family = "Liberation Sans"))
-  
+
+resave(alpha.plot, file = "./abridged.RData")
 
 #### Beta Diversity ####
 # For the entire dataset, caluclate the weighted unifrac distances from the total sum scaled (TSS) data # 
@@ -803,9 +867,14 @@ ksp_by.perm
 ksp.perm <- adonis2(ksp.bdist~Treatment*Site, data = final_ksp$met)
 ksp.perm
 
-plot_ordination(ksp_prop.ps, ord.nmds.wuni, color="Site", shape = 'Treatment', title="NMDS") +
+resave(ksp_by.perm, file = './abridged.RData')
+resave(ksp.perm, file = './abridged.RData')
+
+beta.plot<- plot_ordination(ksp_prop.ps, ord.nmds.wuni, color="Site", shape = 'Treatment', title="NMDS") +
   theme_prism() +
   geom_point(size = 6) 
+
+resave(beta.plot, file = './abridged.RData')
 
 #### Per Sample Analysis ####
 if(!requireNamespace("devtools")) install.packages('devtools')
@@ -826,20 +895,25 @@ a.bdist <- phyloseq::distance(a.ps, method = "bray")
 # Perform PermANOVA #
 a.perm <- adonis2(a.bdist~Treatment, data = a.met)
 a.perm
+resave(a.perm, file = 'abridged.RData')
 
 # Perform pairwise PermANOVA #
 a.pair <- pairwise.adonis2(a.bdist~Treatment, data = a.met)
 a.pair
+resave(a.pair, file = './abridged.RData')
 
 # Plot the results #
-plot_ordination(a_prop.ps, a_ord.nmds.wuni, color="Treatment", title="A Samples NMDS") +
+a_beta.plot <- plot_ordination(a_prop.ps, a_ord.nmds.wuni, color="Treatment", title="A Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+
+resave(a_beta.plot, file = 'abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 a.met <- cbind(a.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "A"))
 a.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = a.met)
-summary(a.man)
+a_man.sum <- summary(a.man)
+resave(a_sum.man, file = './abridged.RData')
 
 ## B ##
 # Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
@@ -853,20 +927,24 @@ b.bdist <- phyloseq::distance(b.ps, method = "bray")
 # Perform PermANOVA #
 b.perm <- adonis2(b.bdist~Treatment, data = b.met)
 b.perm
+resave(b.perm, file = './abridged.RData')
 
 # Perform pairwise PermANOVA #
 b.pair <- pairwise.adonis2(b.bdist~Treatment, data = b.met)
 b.pair
+resave(b.pair, file = './abridged.RData')
 
 # Plot the results #
-plot_ordination(b_prop.ps, b_ord.nmds.wuni, color="Treatment", title="B Samples NMDS") +
+b_beta.plot <- plot_ordination(b_prop.ps, b_ord.nmds.wuni, color="Treatment", title="B Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+resave(b_beta.plot, file = './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 b.met <- cbind(b.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "B"))
 b.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = b.met)
-summary(b.man)
+b_man.sum <- summary(b.man)
+resave(b_man.sum, file = 'abridged.RData')
 
 ## C ##
 # Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
@@ -880,20 +958,25 @@ c.bdist <- phyloseq::distance(c.ps, method = "bray")
 # Perform PermANOVA #
 c.perm <- adonis2(c.bdist~Treatment, data = c.met)
 c.perm
+resave(c.perm, file = './abridged.RData')
 
 # Perform pairwise PermANOVA #
 c.pair <- pairwise.adonis2(c.bdist~Treatment, data = c.met)
 c.pair
+resave(c.pair, file = './abridged.RData')
 
 # Plot the results #
-plot_ordination(c_prop.ps, c_ord.nmds.wuni, color="Treatment", title="C Samples NMDS") +
+c_beta.plot <- plot_ordination(c_prop.ps, c_ord.nmds.wuni, color="Treatment", title="C Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+resave(c_beta.plot, './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 c.met <- cbind(c.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "C"))
 c.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = c.met)
-summary(c.man)
+c_man.sum <- summary(c.man)
+resave(c_man.sum, file = './abridged.RData')
+
 
 ## D ##
 # Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
@@ -907,20 +990,23 @@ d.bdist <- phyloseq::distance(d.ps, method = "bray")
 # Perform PermANOVA #
 d.perm <- adonis2(d.bdist~Treatment, data = d.met)
 d.perm
+resave(d.perm, file = './abridged.RData')
 
 # Perform pairwise PermANOVA #
 d.pair <- pairwise.adonis2(d.bdist~Treatment, data = d.met)
 d.pair
+resave(d.pair, file = './abridged.RData')
 
 # Plot the results #
-plot_ordination(d_prop.ps, d_ord.nmds.wuni, color="Treatment", title="D Samples NMDS") +
+d_beta.plot <- plot_ordination(d_prop.ps, d_ord.nmds.wuni, color="Treatment", title="D Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+resave(d_beta.plot, file = 'abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 d.met <- cbind(d.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "D"))
 d.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = d.met)
-summary(d.man)
+d_man.sum <- summary(d.man)
 
 ## E ##
 # Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
@@ -934,20 +1020,24 @@ e.bdist <- phyloseq::distance(e.ps, method = "bray")
 # Perform PermANOVA #
 e.perm <- adonis2(e.bdist~Treatment, data = e.met)
 e.perm
+resave(e.perm, file = 'abridged.RData')
 
 # Perform pairwise PermANOVA #
 e.pair <- pairwise.adonis2(e.bdist~Treatment, data = e.met)
 e.pair
+resave(e.pair, file = 'abridged.RData')
 
 # Plot the results #
-plot_ordination(e_prop.ps, e_ord.nmds.wuni, color="Treatment", title="E Samples NMDS") +
+e_beta.plot <- plot_ordination(e_prop.ps, e_ord.nmds.wuni, color="Treatment", title="E Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+resave(e_beta.plot, file = './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 e.met <- cbind(e.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "E"))
 e.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = e.met)
-summary(e.man)
+e_man.sum <- summary(e.man)
+resave(e_man.sum, file = 'abridged.RData')
 
 ## F ##
 # Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
@@ -961,20 +1051,24 @@ f.bdist <- phyloseq::distance(f.ps, method = "bray")
 # Perform PermANOVA #
 f.perm <- adonis2(f.bdist~Treatment, data = f.met)
 f.perm
+resave(f.perm, file = './abridged.RData')
 
 # Perform pairwise PermANOVA #
 f.pair <- pairwise.adonis2(f.bdist~Treatment, data = f.met)
 f.pair
+resave(f.pair, file = './abridged.RData')
 
 # Plot the results #
-plot_ordination(f_prop.ps, f_ord.nmds.wuni, color="Treatment", title="F Samples NMDS") +
+f_beta.plot <- plot_ordination(f_prop.ps, f_ord.nmds.wuni, color="Treatment", title="F Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+resave(f_beta.plot, file = 'abridged.RData', file = './abrdiged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 f.met <- cbind(f.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "F"))
 f.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = f.met)
-summary(f.man)
+f_man.sum <- summary(f.man)
+resave(f_man.sum, file = './abridged.RData')
 
 ## G ##
 # Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
@@ -988,20 +1082,24 @@ g.bdist <- phyloseq::distance(g.ps, method = "bray")
 # Perform PermANOVA #
 g.perm <- adonis2(g.bdist~Treatment, data = g.met)
 g.perm
+resave(g.perm, file = './abridged.RData')
 
 # Perform pairwise PermANOVA #
 g.pair <- pairwise.adonis2(g.bdist~Treatment, data = g.met)
 g.pair
+resave(g.pair, file = './abridged.RData')
 
 # Plot the results #
-plot_ordination(g_prop.ps, g_ord.nmds.wuni, color="Treatment", title="G Samples NMDS") +
+g_beta.plot <- plot_ordination(g_prop.ps, g_ord.nmds.wuni, color="Treatment", title="G Samples NMDS") +
   theme_prism() +
   geom_point(size = 6) 
+resave(g_beta.plot, file = './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 g.met <- cbind(g.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "G"))
 g.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = g.met)
-summary(g.man)
+g_man.sum <- summary(g.man)
+resave(g.man.sum, file = './abridged.RData')
 
 ## H ##
 # Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
@@ -1015,20 +1113,24 @@ h.bdist <- phyloseq::distance(h.ps, method = "bray")
 # Perform PermANOVA #
 h.perm <- adonis2(h.bdist~Treatment, data = h.met)
 h.perm
+resave(h.perm, file = './abridged.RData')
 
 # Perform pairwise PermANOVA #
 h.pair <- pairwise.adonis2(h.bdist~Treatment, data = b.met)
 h.pair
+resave(h.pair, file = './h.pair')
 
 # Plot the results #
-plot_ordination(h_prop.ps, h_ord.nmds.wuni, color="Treatment", title="H Samples NMDS") +
+h_beta.plot <- plot_ordination(h_prop.ps, h_ord.nmds.wuni, color="Treatment", title="H Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+resave(h_beta.plot, file = './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 h.met <- cbind(h.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "H"))
 h.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = h.met)
-summary(h.man)
+h_man.sum <- summary(h.man) 
+resave(h_man.sum, file = './abridged.RData')
 
 #### Stacked Histograms ####
 # First we start by making a color pallette for each unique ASV #
@@ -1085,6 +1187,7 @@ hg_myc.plot <- ggplot(hg_myc.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_myc.plot, file = './abridged.RData')
 
 ## Site A Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
@@ -1125,6 +1228,8 @@ hg_a.plot <- ggplot(hg_a.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
 
+resave(hg_a.plot, file = './abridged.RData')
+
 ## Site B Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
 hg_b.ps <- subset_samples(spec_ksp.ps, Site == "B" | Treatment == "MycoBloom")
@@ -1163,6 +1268,7 @@ hg_b.plot <- ggplot(hg_b.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_b.plot, file = './abridged.RData')
 
 ## Site C Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
@@ -1202,6 +1308,7 @@ hg_c.plot <- ggplot(hg_c.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_c.plot, file = './abridged.RData')
 
 ## Site D Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
@@ -1241,6 +1348,7 @@ hg_d.plot <- ggplot(hg_d.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_d.plot, file = './abridged.RData')
 
 ## Site E Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
@@ -1280,6 +1388,7 @@ hg_e.plot <- ggplot(hg_e.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_e.plot, file = './abridged.RData')
 
 ## Site F Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
@@ -1319,6 +1428,7 @@ hg_f.plot <- ggplot(hg_f.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_f.plot, file = './abridged.RData')
 
 ## Site G Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
@@ -1358,6 +1468,7 @@ hg_g.plot <- ggplot(hg_g.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_g.plot, file = './abridged.RData')
 
 ## Site H Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
@@ -1397,6 +1508,7 @@ hg_h.plot <- ggplot(hg_h.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_h.plot, file = './abridged.RData')
 
 ## All Samples Across Sites Pooled ##
 hg_ksp.colr <- ksp.colr[hg_myc.name,]
@@ -1429,6 +1541,7 @@ hg_ksp.plot <- ggplot(hg_ksp.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.ticks.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
+resave(hg_ksp.plot, file = './abridged.RData')
 
 #### Set Plot for overlapping taxa with MycoBloom and Treatments ####
 # Save the names of the taxa found in the mycobloom sample #
@@ -1459,6 +1572,13 @@ for (group in names(all.name)) {
   all.asv[[group]] <- all.asv$ASV %in% all.name[[group]]
 }
 
+myc_nc.name <- filter(all.asv, hig == "TRUE" | low == "TRUE")
+myc_nc.name <- filter(myc_nc.name, con == "FALSE")
+resave(myc_nc.name, file = 'abridged.RData')
+
+myc_myc.name <- filter(all.asv, con == "FALSE" & hig == "FALSE" & low == "FALSE")
+resave(myc_myc.name, file = './abridged.RData')
+
 # Create the set plot #
 myc.set <- upset(
   all.asv,
@@ -1469,11 +1589,7 @@ myc.set <- upset(
     upset_query(intersect = c("myc", "hig"), color = "black", fill = "blue"),
     upset_query(intersect = "myc", color = "black", fill = "orange"))
   )
-
-myc_nc.name <- filter(all.asv, hig == "TRUE" | low == "TRUE")
-myc_nc.name <- filter(myc_nc.name, con == "FALSE")
-
-myc_myc.name <- filter(all.asv, con == "FALSE" & hig == "FALSE" & low == "FALSE")
+resave(myc.set, file = './abridged.RData')
 
 ## Site A Set Plot
 a_con.ps <- subset_samples(a.ps, Treatment == "Control")
@@ -1500,8 +1616,10 @@ for (group in names(a.name)) {
 # Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
 a_nc.name <- filter(a.asv, a_hig == "TRUE" | a_low == "TRUE")
 a_nc.name <- filter(a_nc.name, a_con == "FALSE")
+resave(a_nc.name, file = 'abridged.RData')
 
 a_myc.name <- filter(a.asv, a_con == "FALSE" & a_hig == "FALSE" & a_low == "FALSE")
+resave(a_myc.name, file = './abridged.RData')
 
 # Create the set plot #
 a.set <- upset(
@@ -1514,6 +1632,7 @@ a.set <- upset(
     upset_query(intersect = "myc", color = "black", fill = "orange"),
     upset_query(intersect = c("myc", "a_hig", "a_low"), color = "black", fill = "blue"))
   )
+resave(a.set, file = './abridged.RData')
 
 ## Site B Set Plot
 b_con.ps <- subset_samples(b.ps, Treatment == "Control")
@@ -1540,8 +1659,10 @@ for (group in names(b.name)) {
 # Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
 b_nc.name <- filter(b.asv, b_hig == "TRUE" | b_low == "TRUE")
 b_nc.name <- filter(b_nc.name, b_con == "FALSE")
+resave(b_nc.name, file = 'abridged.RData')
 
 b_myc.name <- filter(b.asv, b_con == "FALSE" & b_hig == "FALSE" & b_low == "FALSE")
+resave(b_myc.name, file = './abridged.RData')
 
 # Create the set plot #
 b.set <- upset(
@@ -1555,6 +1676,7 @@ b.set <- upset(
     upset_query(intersect = c("myc", "b_hig", "b_low"), color = "black", fill = "blue"),
     upset_query(intersect = c("myc", "b_low"), color = "black", fill = "blue"))
   )
+resave(b.set, file = './abridged.RData')
 
 ## Site C Set Plot
 c_con.ps <- subset_samples(c.ps, Treatment == "Control")
@@ -1581,8 +1703,10 @@ for (group in names(c.name)) {
 # Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
 c_nc.name <- filter(c.asv, c_hig == "TRUE" | c_low == "TRUE")
 c_nc.name <- filter(c_nc.name, c_con == "FALSE")
+resave(c_nc.name, file = 'abridged.RData')
 
 c_myc.name <- filter(c.asv, c_con == "FALSE" & c_hig == "FALSE" & c_low == "FALSE")
+resave(c_myc.name, file = './abridged.RData')
 
 # Create the set plot #
 c.set <- upset(
@@ -1597,6 +1721,7 @@ c.set <- upset(
     upset_query(intersect = c("myc", "c_low"), color = "black", fill = "blue"),
     upset_query(intersect = c("myc", "c_hig"), color = "black", fill = "blue"))
 )
+resave(c.set, file = './abridged.RData')
 
 ## Site D Set Plot
 d_con.ps <- subset_samples(d.ps, Treatment == "Control")
@@ -1623,8 +1748,10 @@ for (group in names(d.name)) {
 # Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
 d_nc.name <- filter(d.asv, d_hig == "TRUE" | d_low == "TRUE")
 d_nc.name <- filter(d_nc.name, d_con == "FALSE")
+resave(d_nc.name, file = 'abridged.RData')
 
 d_myc.name <- filter(d.asv, d_con == "FALSE" & d_hig == "FALSE" & d_low == "FALSE")
+resave(d_myc.name, file = './abridged.RData')
 
 # Create the set plot #
 d.set <- upset(
@@ -1639,6 +1766,7 @@ d.set <- upset(
     upset_query(intersect = c("myc", "d_low"), color = "black", fill = "blue"),
     upset_query(intersect = c("myc", "d_hig"), color = "black", fill = "blue"))
 )
+resave(d.set, file = './abridged.RData')
 
 ## Site E Set Plot
 e_con.ps <- subset_samples(e.ps, Treatment == "Control")
@@ -1665,8 +1793,10 @@ for (group in names(e.name)) {
 # Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
 e_nc.name <- filter(e.asv, e_hig == "TRUE" | e_low == "TRUE")
 e_nc.name <- filter(e_nc.name, e_con == "FALSE")
+resave(e_nc.name, file = 'abridged.RData')
 
 e_myc.name <- filter(e.asv, e_con == "FALSE" & e_hig == "FALSE" & e_low == "FALSE")
+resave(e_myc.name, file = './abridged.RData')
 
 # Create the set plot #
 e.set <- upset(
@@ -1678,6 +1808,7 @@ e.set <- upset(
   queries = list(
     upset_query(intersect = "myc", color = "black", fill = "orange"))
   )
+resave(e.set, file = './abridged.RData')
 
 ## Site F Set Plot
 f_con.ps <- subset_samples(f.ps, Treatment == "Control")
@@ -1698,8 +1829,10 @@ f_low.name <- taxa_names(f_low.ps)
 # Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
 f_nc.name <- filter(f.asv, f_hig == "TRUE" | f_low == "TRUE")
 f_nc.name <- filter(f_nc.name, f_con == "FALSE")
+resave(f_nc.name, file = 'abridged.RData')
 
 f_myc.name <- filter(f.asv, f_con == "FALSE" & f_hig == "FALSE" & f_low == "FALSE")
+resave(f_myc.name, file = './abridged.RData')
 
 # Construct a data.frame that contains TRUE and FALSE values for taxa presence #
 f.name <- list(myc = myc.name, f_con = f_con.name, f_hig = f_hig.name, f_low = f_low.name)
@@ -1719,6 +1852,7 @@ f.set <- upset(
     upset_query(intersect = c("myc", "f_low"), color = "black", fill = "blue"),
     upset_query(intersect = c("myc", "f_hig"), color = "black", fill = "blue"))
 )
+resave(f.set, file = './abridged.RData')
 
 ## Site G Set Plot
 g_con.ps <- subset_samples(g.ps, Treatment == "Control")
@@ -1745,8 +1879,10 @@ for (group in names(g.name)) {
 # Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
 g_nc.name <- filter(g.asv, g_hig == "TRUE" | g_low == "TRUE")
 g_nc.name <- filter(g_nc.name, g_con == "FALSE")
+resave(a_nc.name, file = 'abridged.RData')
 
 g_myc.name <- filter(g.asv, g_con == "FALSE" & g_hig == "FALSE" & g_low == "FALSE")
+resave(g_myc.name, file = './abridged.RData')
 
 # Create the set plot #
 g.set <- upset(
@@ -1760,6 +1896,7 @@ g.set <- upset(
     upset_query(intersect = c("myc", "g_hig", "g_low"), color = "black", fill = "blue"),
     upset_query(intersect = c("myc", "g_hig"), color = "black", fill = "blue"))
 )
+resave(g.set, file = './abridged.RData')
 
 ## Site H Set Plot
 h_con.ps <- subset_samples(h.ps, Treatment == "Control")
@@ -1786,8 +1923,10 @@ for (group in names(h.name)) {
 # Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
 h_nc.name <- filter(h.asv, h_hig == "TRUE" | h_low == "TRUE")
 h_nc.name <- filter(h_nc.name, h_con == "FALSE")
+resave(a_nc.name, file = 'abridged.RData')
 
 h_myc.name <- filter(h.asv, h_con == "FALSE" & h_hig == "FALSE" & h_low == "FALSE")
+resave(h_myc.name, file = './abridged.RData')
 
 # Create the set plot #
 h.set <- upset(
@@ -1802,5 +1941,6 @@ h.set <- upset(
     upset_query(intersect = c("myc", "h_low"), color = "black", fill = "blue"),
     upset_query(intersect = c("myc", "h_hig"), color = "black", fill = "blue"))
   )
+resave(h.set, file = './abridged.RData')
 
 save.image("./ksp_amf.RData")
