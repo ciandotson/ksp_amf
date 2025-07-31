@@ -253,6 +253,7 @@ for(i in 1:nrow(raw_ksp.tax)){
 # Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
 myc.ps <- subset_samples(raw_ksp.ps, Treatment == "MycoBloom")
 myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
+myc_prop.ps <- transform_sample_counts(myc.ps, function(x) x/sum(x))
 
 resave(myc.ps, file = "./abridged.RData")
 
@@ -263,15 +264,24 @@ decompose_ps <- function(ps, label){
   tax.tab <- as.data.frame(tax_table(ps))
   otu.tab <- as.data.frame(otu_table(ps))
   met.tab <- as(sample_data(ps), 'data.frame')
-  dna.tab <- refseq(ps)
+  if(!is.null(access(ps, "refseq"))){
+    dna.tab <- refseq(ps)
+  }
   fra.tab <- cbind(tax.tab, otu.tab)
-  decomposed = list(
+  if(!is.null(access(ps, "refseq"))){
+    decomposed = list(
     tax = tax.tab,
     otu = otu.tab,
     met = met.tab,
     dna = dna.tab,
-    fra = fra.tab
-  )
+    fra = fra.tab)
+  }else {
+    decomposed = list(
+      tax = tax.tab,
+      otu = otu.tab,
+      met = met.tab,
+      fra = fra.tab) 
+  }
   assign(label, decomposed, envir = .GlobalEnv)
   invisible(decomposed)
 }
@@ -379,38 +389,72 @@ final_ksp.ps <- subset_taxa(final_ksp.ps, !taxa_names(final_ksp.ps) %in% out.tip
 final_ksp.ps <- subset_samples(final_ksp.ps, Treatment != "TC")
 final_ksp.ps <- subset_taxa(final_ksp.ps, taxa_sums(final_ksp.ps) > 0)
 
-# Reorganize the ASV table in decresaing order of taxa abundance #
-decompose_ps(final_ksp.ps, 'final_ksp')
-final_ksp$otu <- arrange(final_ksp$otu, desc(rowSums(final_ksp$otu)))
-final_ksp$tax <- final_ksp$tax[rownames(final_ksp$otu),]
+# To give us the option to remove half of the control samples ofr the sake of having balanced statitsical tests, I have made this function to remove one of each replicate. #
+# The decsion for a replicate to be selected is based purely on the number of reads the replicate has, with the sample with higher reads being selected. #
+con.ps <- subset_samples(final_ksp.ps, Treatment == "Control")
+decompose_ps(con.ps, 'con')
+con$met$Reads <- colSums(con$otu)
+remn.met <- c()
+for(i in LETTERS[1:8]){
+  group <- filter(con$met, Site == i)
+  for(j in 1:3){
+    grouped <- filter(group, Replicate == j)
+    if(grouped$Reads[1] <= grouped$Reads[2]) {
+      remn.met <- rbind(remn.met, grouped[1,])
+    }else(remn.met <- rbind(remn.met, grouped[2,]))
+  }
+}
 
-# Resave the new final phyloseq object #
-final_ksp.ps <- phyloseq(otu_table(final_ksp$otu, taxa_are_rows = TRUE),
-                         tax_table(as.matrix(final_ksp$tax)),
-                         sample_data(final_ksp$met),
-                         refseq(final_ksp$dna),
-                         phy_tree(phy_tree(final_ksp.ps)))
+# Save only the control samples that are NOT found in the list #
+fin_ksp.ps <- subset_samples(final_ksp.ps, !sample_names(final_ksp.ps) %in% rownames(remn.met))
+final_ksp.ps <- subset_taxa(fin_ksp.ps, taxa_sums(fin_ksp.ps) > 0)
 
-# Rename taxa so they correspond to their new ordering based on abundance #
+# Rename taxa so they correspond to their new ordering based on abundance; also, make a new column for each lowest classification #
 taxa_names(final_ksp.ps) <- paste0("ASV", seq(ntaxa(final_ksp.ps)))
 final_ksp.tax <- as.data.frame(tax_table(final_ksp.ps))
 for(i in 1:nrow(final_ksp.tax)){
   if(!is.na(final_ksp.tax$Species[i])){
     if(final_ksp.tax$Species[i] != "sp.") {
-      taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Species[i], ')')}
-      else(taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Genus[i], ')'))
+      taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Species[i], ')')
+      final_ksp.tax$Final[i] <- final_ksp.tax$Species[i]}
+    else{taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Genus[i], ')') 
+    final_ksp.tax$Final[i] <- final_ksp.tax$Genus[i]}
   } else if(!is.na(final_ksp.tax$Genus[i])){
     taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Genus[i], ')')
+    final_ksp.tax$Final[i] <- final_ksp.tax$Genus[i]
   } else if(!is.na(final_ksp.tax$Family[i])){
     taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Family[i], ')')
+    final_ksp.tax$Final[i] <- final_ksp.tax$Family[i]
   }
 }
+# Remake the taxa table to only include MaarJAM databse hits #
+rownames(final_ksp.tax) <- taxa_names(final_ksp.ps)
+tax_table(final_ksp.ps) <- as.matrix(final_ksp.tax)[,c("Family", "Genus", "Species", "Final", "ASV")]
 
-decompose_ps(final_ksp.ps, 'final_ksp')
-resave(final_ksp.ps, file = "./hold.RData") 
+if(!requireNamespace("microbiome")) BiocManager::install("microbiome")
+library(microbiome); packageVersion("microbiome")
+
+spec_ksp.ps <- aggregate_taxa(final_ksp.ps, level = "Final")
+spec_ksp.ps <- subset_taxa(spec_ksp.ps, taxa_sums(spec_ksp.ps) > 0)
+
+
+decompose_ps(spec_ksp.ps, 'spec_ksp')
+spec_ksp$otu <- arrange(spec_ksp$otu, desc(rowSums(spec_ksp$otu)))
+spec_ksp$tax <- spec_ksp$tax[rownames(spec_ksp$otu),] 
+
+spec_ksp.ps <- phyloseq(otu_table(spec_ksp$otu, taxa_are_rows = TRUE),
+                        tax_table(as.matrix(spec_ksp$tax)),
+                        sample_data(spec_ksp$met))
+
+for(i in 1:ntaxa(spec_ksp.ps)){
+  taxa_names(spec_ksp.ps)[i] <- paste0('ASV', i, '(', tax_table(spec_ksp.ps)[i, 4], ')')}
+
+for(i in 1:ntaxa(spec_ksp.ps)){
+  tax_table(spec_ksp.ps)[i,"ASV"] <- taxa_names(spec_ksp.ps)[i] 
+}
 
 # Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
-myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
+myc.ps <- subset_samples(spec_ksp.ps, Treatment == "MycoBloom")
 myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 decompose_ps(myc.ps, 'myc')
 myc$fra <- arrange(myc$fra, desc(myc$fra$MycoBloom1))
@@ -418,30 +462,41 @@ myc$fra <- arrange(myc$fra, desc(myc$fra$MycoBloom1))
 save.image("ksp_amf.RData")
 
 #### Alpha Diversity Measurement and Visualization ####
-ksp.rich <- estimate_richness(final_ksp.ps) # automatically performs alpha diversity calculations #
+ksp.rich <- estimate_richness(spec_ksp.ps) # automatically performs alpha diversity calculations #
 ksp.rich <- cbind(final_ksp$met, ksp.rich)
 myc.rich <- filter(ksp.rich, Treatment == "MycoBloom")
 ksp.rich <- filter(ksp.rich, Treatment != "MycoBloom")
 
-# ANOVA for each kind of alpha diversity 
+# ANOVA for each kind of alpha diversity #
+if(!requireNamespace("car")) install.packages("car")
+library(car); packageVersion("car")
+
+# Perform the ANOVA and normality and variance tests #
 ksp.sha <- aov(Shannon ~ Site*Treatment, ksp.rich) 
 summary(ksp.sha)
 ksp_sha.hsd <- TukeyHSD(ksp.sha)
+shapiro.test(residuals(ksp.sha))
+leveneTest(ksp.sha)
 
+# Perform the ANOVA and normality and variance tests #
 ksp.sim <- aov(Simpson ~ Site*Treatment, ksp.rich) 
 summary(ksp.sim)
 ksp_sim.hsd <- TukeyHSD(ksp.sim)
+shapiro.test(residuals(ksp.sim))
+leveneTest(ksp.sim)
 
+# Perform the ANOVA and normality and variance tests #
 ksp.cha <- aov(Chao1 ~ Site*Treatment, ksp.rich) 
 summary(ksp.cha)
 ksp_cha.hsd <- TukeyHSD(ksp.cha)
+shapiro.test(residuals(ksp.cha))
+leveneTest(ksp.cha)
 
+# Find the mean and standard deviation of each grouping #
 if(!requireNamespace('ggprism')) install.packages('ggprism')
 library(ggprism); packageVersion('ggprism')
-
 if(!requireNamespace('ggplot2')) install.packages('ggplot2')
 library(ggplot2); packageVersion('ggplot2')
-
 ksp_rich.mnsd <- ksp.rich %>%
   group_by(Site, Treatment) %>%
   summarize(
@@ -541,11 +596,12 @@ plot.rich$Treats <- factor(plot.rich$Treatment, levels = c("Control", "Low", "Hi
 plot.rich$sha.let[7] <- 'ab'
 plot.rich$sha.let[8] <- 'b'
 plot.rich$sha.let[9] <- 'a'
-plot.rich$sha.let[19] <- 'b'
-plot.rich$sha.let[20] <- 'a'
+plot.rich$sha.let[16] <- 'ab'
+plot.rich$sha.let[17] <- 'a'
+plot.rich$sha.let[18] <- 'b'
 plot.rich$sha.let[22] <- 'b'
-plot.rich$sha.let[23] <- 'a'
-plot.rich$sha.let[24] <- 'b'
+plot.rich$sha.let[24] <- 'a'
+
 
 sha.plot <- ggplot(plot.rich, aes(x = Site, y = sha.mean, fill = Treats, color = Treats)) +
   geom_bar(stat = 'summary', position = 'dodge', width = 0.7) +
@@ -553,9 +609,9 @@ sha.plot <- ggplot(plot.rich, aes(x = Site, y = sha.mean, fill = Treats, color =
   ylab('Shannon Diversity') +
   scale_fill_manual(values = c("white", "gray", "#4D4D4D", 'black')) +
   scale_color_manual(values = c('black', 'black', 'black')) +
-  scale_y_continuous(limits = c(0,6)) +
+  scale_y_continuous(limits = c(0,4)) +
   ggtitle('Shannon Diversity') +
-  geom_text(aes(label = sha.let, y = sha.mean + sha.sd + 0.1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 12) +
+  geom_text(aes(label = sha.let, y = sha.mean + sha.sd + 0.1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
   geom_errorbar(aes(ymin = sha.mean - sha.sd, ymax = sha.mean + sha.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
 
 # Simpson Diversity #
@@ -617,11 +673,16 @@ sim.let <- c(a_sim.let$Treatment$Letters,
              h_sim.let$Treatment$Letters)
 plot.rich <- cbind(plot.rich, sim.let)
 
-plot.rich$sim.let[20] <- 'a'
-plot.rich$sim.let[21] <- 'ab'
-plot.rich$sim.let[23] <- 'a'
-plot.rich$sim.let[24] <- 'ab'
-
+plot.rich$sim.let[10] <- 'b'
+plot.rich$sim.let[11] <- 'a'
+plot.rich$sim.let[12] <- 'ab'
+plot.rich$sim.let[13] <- 'b'
+plot.rich$sim.let[15] <- 'a'
+plot.rich$sim.let[16] <- 'ab'
+plot.rich$sim.let[17] <- 'a'
+plot.rich$sim.let[18] <- 'b'
+plot.rich$sim.let[22] <- 'b'
+plot.rich$sim.let[24] <- 'a'
 
 evn.plot <- ggplot(plot.rich, aes(x = Site, y = evn.mean, fill = Treats, color = Treats)) +
   geom_bar(stat = 'summary', position = 'dodge', width = 0.7) +
@@ -631,7 +692,7 @@ evn.plot <- ggplot(plot.rich, aes(x = Site, y = evn.mean, fill = Treats, color =
   scale_color_manual(values = c('black', 'black', 'black')) +
   scale_y_continuous(limits = c(0,1.1)) +
   ggtitle("Simpson's Diversity") +
-  geom_text(aes(label = sim.let, y = evn.mean + evn.sd + 0.01), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 12) +
+  geom_text(aes(label = sim.let, y = evn.mean + evn.sd + 0.01), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
   geom_errorbar(aes(ymin = evn.mean - evn.sd, ymax = evn.mean + evn.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
 
 # Otu Richness #
@@ -692,6 +753,17 @@ cha.let <- c(a_cha.let$Treatment$Letters,
              g_cha.let$Treatment$Letters,
              h_cha.let$Treatment$Letters)
 plot.rich <- cbind(plot.rich, cha.let)
+plot.rich$cha.let[16] <- 'ab'
+plot.rich$cha.let[17] <- 'a'
+plot.rich$cha.let[18] <- 'b'
+plot.rich$cha.let[19] <- 'b'
+plot.rich$cha.let[20] <- 'a'
+plot.rich$cha.let[21] <- 'ab'
+plot.rich$cha.let[22] <- 'b'
+plot.rich$cha.let[23] <- 'a'
+plot.rich$cha.let[24] <- 'b'
+
+
 
 cha.plot <- ggplot(plot.rich, aes(x = Site, y = cha.mean, fill = Treats, color = Treats)) +
   geom_bar(stat = 'summary', position = 'dodge', width = 0.7) +
@@ -699,9 +771,9 @@ cha.plot <- ggplot(plot.rich, aes(x = Site, y = cha.mean, fill = Treats, color =
   ylab("ASV Richness") +
   scale_fill_manual(values = c("white", "gray", "#4D4D4D", 'black')) +
   scale_color_manual(values = c('black', 'black', 'black')) +
-  scale_y_continuous(limits = c(0,250)) +
+  scale_y_continuous(limits = c(0,80)) +
   ggtitle("Chao1 Diversity") +
-  geom_text(aes(label = cha.let, y = cha.mean + cha.sd + 0.1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 12) +
+  geom_text(aes(label = cha.let, y = cha.mean + cha.sd + 1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
   geom_errorbar(aes(ymin = cha.mean - cha.sd, ymax = cha.mean + cha.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2)
 
 if(!requireNamespace('patchwork')) install.packages('patchwork')
@@ -710,21 +782,28 @@ library(patchwork); packageVersion('patchwork')
 alpha.plot <- (cha.plot) /
 (evn.plot) /
 (sha.plot) +
-  plot_layout(guides = 'collect')
+  plot_layout(guides = 'collect') &
+  theme(legend.position = 'bottom',
+        legend.key.spacing.x = unit(3, 'cm'),
+        legend.text = element_text(size = 18, color = 'black', face = 'bold', family = "Liberation Sans"))
   
 
 #### Beta Diversity ####
+# For the entire dataset, caluclate the weighted unifrac distances from the total sum scaled (TSS) data # 
 set.seed(248)
-final_ksp_prop.ps <- transform_sample_counts(final_ksp.ps, function(otu) otu/sum(otu))
-ord.nmds.wuni <- ordinate(final_ksp_prop.ps, method="NMDS", distance="wunifrac")
-ksp.bdist <- phyloseq::distance(final_ksp.ps, method = "wunifrac")
+ksp_prop.ps <- transform_sample_counts(spec_ksp.ps, function(otu) otu/sum(otu))
+ord.nmds.wuni <- ordinate(ksp_prop.ps, method="NMDS", distance="bray")
+ksp.bdist <- phyloseq::distance(spec_ksp.ps, method = "bray")
 
+# Perform PermANOVA for the entire dataset
 if(!requireNamespace("vegan")) install.package("vegan")
 library(vegan); packageVersion('vegan')
-ksp.perm <- adonis2(ksp.bdist~Site*Treatment, data = final_ksp$met)
+ksp_by.perm <- adonis2(ksp.bdist~Treatment*Site, data = final_ksp$met, by = "terms")
+ksp_by.perm
+ksp.perm <- adonis2(ksp.bdist~Treatment*Site, data = final_ksp$met)
 ksp.perm
 
-plot_ordination(final_ksp_prop.ps, ord.nmds.wuni, color="Site", shape = 'Treatment', title="NMDS") +
+plot_ordination(ksp_prop.ps, ord.nmds.wuni, color="Site", shape = 'Treatment', title="NMDS") +
   theme_prism() +
   geom_point(size = 6) 
 
@@ -735,177 +814,258 @@ library(devtools); packageVersion('devtools')
 if(!requireNamespace("pairwiseAdonis")) devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
 library(pairwiseAdonis); packageVersion("pairwiseAdonis")
 
-# A #
-a.ps <- subset_samples(final_ksp.ps, Site == 'A')
+## A ##
+# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+a.ps <- subset_samples(spec_ksp.ps, Site == 'A')
+a.ps <- subset_taxa(a.ps, taxa_sums(a.ps) > 0)
 a.met <- as(sample_data(a.ps), 'data.frame')
 a_prop.ps <- transform_sample_counts(a.ps, function(otu) otu/sum(otu))
-a_ord.nmds.wuni <- ordinate(a_prop.ps, method="NMDS", distance="wunifrac")
-a.bdist <- phyloseq::distance(a.ps, method = "wunifrac")
+a_ord.nmds.wuni <- ordinate(a_prop.ps, method="NMDS", distance="bray")
+a.bdist <- phyloseq::distance(a.ps, method = "bray")
 
+# Perform PermANOVA #
 a.perm <- adonis2(a.bdist~Treatment, data = a.met)
 a.perm
 
+# Perform pairwise PermANOVA #
 a.pair <- pairwise.adonis2(a.bdist~Treatment, data = a.met)
 a.pair
 
+# Plot the results #
 plot_ordination(a_prop.ps, a_ord.nmds.wuni, color="Treatment", title="A Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
 
-# B #
-b.ps <- subset_samples(final_ksp.ps, Site == 'B')
+# Perform MANOVA using the loading scores of the first 2 dimensions #
+a.met <- cbind(a.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "A"))
+a.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = a.met)
+summary(a.man)
+
+## B ##
+# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+b.ps <- subset_samples(spec_ksp.ps, Site == 'B')
+b.ps <- subset_taxa(b.ps, taxa_sums(b.ps) > 0)
 b.met <- as(sample_data(b.ps), 'data.frame')
 b_prop.ps <- transform_sample_counts(b.ps, function(otu) otu/sum(otu))
-b_ord.nmds.wuni <- ordinate(b_prop.ps, method="NMDS", distance="wunifrac")
-b.bdist <- phyloseq::distance(b.ps, method = "wunifrac")
+b_ord.nmds.wuni <- ordinate(b_prop.ps, method="NMDS", distance="bray")
+b.bdist <- phyloseq::distance(b.ps, method = "bray")
 
+# Perform PermANOVA #
 b.perm <- adonis2(b.bdist~Treatment, data = b.met)
 b.perm
 
+# Perform pairwise PermANOVA #
 b.pair <- pairwise.adonis2(b.bdist~Treatment, data = b.met)
 b.pair
 
+# Plot the results #
 plot_ordination(b_prop.ps, b_ord.nmds.wuni, color="Treatment", title="B Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
 
-# C #
-c.ps <- subset_samples(final_ksp.ps, Site == 'C')
+# Perform MANOVA using the loading scores of the first 2 dimensions #
+b.met <- cbind(b.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "B"))
+b.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = b.met)
+summary(b.man)
+
+## C ##
+# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+c.ps <- subset_samples(spec_ksp.ps, Site == 'C')
+c.ps <- subset_taxa(c.ps, taxa_sums(c.ps) > 0)
 c.met <- as(sample_data(c.ps), 'data.frame')
 c_prop.ps <- transform_sample_counts(c.ps, function(otu) otu/sum(otu))
-c_ord.nmds.wuni <- ordinate(c_prop.ps, method="NMDS", distance="wunifrac")
-c.bdist <- phyloseq::distance(c.ps, method = "wunifrac")
+c_ord.nmds.wuni <- ordinate(c_prop.ps, method="NMDS", distance="bray")
+c.bdist <- phyloseq::distance(c.ps, method = "bray")
 
+# Perform PermANOVA #
 c.perm <- adonis2(c.bdist~Treatment, data = c.met)
 c.perm
 
+# Perform pairwise PermANOVA #
 c.pair <- pairwise.adonis2(c.bdist~Treatment, data = c.met)
 c.pair
 
+# Plot the results #
 plot_ordination(c_prop.ps, c_ord.nmds.wuni, color="Treatment", title="C Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) 
+  geom_point(size = 6)
 
-# D #
-d.ps <- subset_samples(final_ksp.ps, Site == 'D')
+# Perform MANOVA using the loading scores of the first 2 dimensions #
+c.met <- cbind(c.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "C"))
+c.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = c.met)
+summary(c.man)
+
+## D ##
+# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+d.ps <- subset_samples(spec_ksp.ps, Site == 'D')
+d.ps <- subset_taxa(d.ps, taxa_sums(d.ps) > 0)
 d.met <- as(sample_data(d.ps), 'data.frame')
 d_prop.ps <- transform_sample_counts(d.ps, function(otu) otu/sum(otu))
-d_ord.nmds.wuni <- ordinate(d_prop.ps, method="NMDS", distance="wunifrac")
-d.bdist <- phyloseq::distance(d.ps, method = "wunifrac")
+d_ord.nmds.wuni <- ordinate(d_prop.ps, method="NMDS", distance="bray")
+d.bdist <- phyloseq::distance(d.ps, method = "bray")
 
+# Perform PermANOVA #
 d.perm <- adonis2(d.bdist~Treatment, data = d.met)
 d.perm
 
+# Perform pairwise PermANOVA #
 d.pair <- pairwise.adonis2(d.bdist~Treatment, data = d.met)
 d.pair
 
+# Plot the results #
 plot_ordination(d_prop.ps, d_ord.nmds.wuni, color="Treatment", title="D Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) 
+  geom_point(size = 6)
 
-# E #
-e.ps <- subset_samples(final_ksp.ps, Site == 'E')
+# Perform MANOVA using the loading scores of the first 2 dimensions #
+d.met <- cbind(d.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "D"))
+d.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = d.met)
+summary(d.man)
+
+## E ##
+# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+e.ps <- subset_samples(spec_ksp.ps, Site == 'E')
+e.ps <- subset_taxa(e.ps, taxa_sums(e.ps) > 0)
 e.met <- as(sample_data(e.ps), 'data.frame')
 e_prop.ps <- transform_sample_counts(e.ps, function(otu) otu/sum(otu))
-e_ord.nmds.wuni <- ordinate(e_prop.ps, method="NMDS", distance="wunifrac")
-e.bdist <- phyloseq::distance(e.ps, method = "wunifrac")
+e_ord.nmds.wuni <- ordinate(e_prop.ps, method="NMDS", distance="bray")
+e.bdist <- phyloseq::distance(e.ps, method = "bray")
 
+# Perform PermANOVA #
 e.perm <- adonis2(e.bdist~Treatment, data = e.met)
 e.perm
 
+# Perform pairwise PermANOVA #
 e.pair <- pairwise.adonis2(e.bdist~Treatment, data = e.met)
 e.pair
 
+# Plot the results #
 plot_ordination(e_prop.ps, e_ord.nmds.wuni, color="Treatment", title="E Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) 
+  geom_point(size = 6)
 
-# F #
-f.ps <- subset_samples(final_ksp.ps, Site == 'F')
+# Perform MANOVA using the loading scores of the first 2 dimensions #
+e.met <- cbind(e.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "E"))
+e.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = e.met)
+summary(e.man)
+
+## F ##
+# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+f.ps <- subset_samples(spec_ksp.ps, Site == 'F')
+f.ps <- subset_taxa(f.ps, taxa_sums(f.ps) > 0)
 f.met <- as(sample_data(f.ps), 'data.frame')
 f_prop.ps <- transform_sample_counts(f.ps, function(otu) otu/sum(otu))
-f_ord.nmds.wuni <- ordinate(f_prop.ps, method="NMDS", distance="wunifrac")
-f.bdist <- phyloseq::distance(f.ps, method = "wunifrac")
+f_ord.nmds.wuni <- ordinate(f_prop.ps, method="NMDS", distance="bray")
+f.bdist <- phyloseq::distance(f.ps, method = "bray")
 
+# Perform PermANOVA #
 f.perm <- adonis2(f.bdist~Treatment, data = f.met)
 f.perm
 
+# Perform pairwise PermANOVA #
 f.pair <- pairwise.adonis2(f.bdist~Treatment, data = f.met)
 f.pair
 
+# Plot the results #
 plot_ordination(f_prop.ps, f_ord.nmds.wuni, color="Treatment", title="F Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) 
+  geom_point(size = 6)
 
-# G #
-g.ps <- subset_samples(final_ksp.ps, Site == 'G')
+# Perform MANOVA using the loading scores of the first 2 dimensions #
+f.met <- cbind(f.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "F"))
+f.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = f.met)
+summary(f.man)
+
+## G ##
+# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+g.ps <- subset_samples(spec_ksp.ps, Site == 'G')
+g.ps <- subset_taxa(g.ps, taxa_sums(g.ps) > 0)
 g.met <- as(sample_data(g.ps), 'data.frame')
 g_prop.ps <- transform_sample_counts(g.ps, function(otu) otu/sum(otu))
-g_ord.nmds.wuni <- ordinate(g_prop.ps, method="NMDS", distance="wunifrac")
-g.bdist <- phyloseq::distance(g.ps, method = "wunifrac")
+g_ord.nmds.wuni <- ordinate(g_prop.ps, method="NMDS", distance="bray")
+g.bdist <- phyloseq::distance(g.ps, method = "bray")
 
+# Perform PermANOVA #
 g.perm <- adonis2(g.bdist~Treatment, data = g.met)
 g.perm
 
+# Perform pairwise PermANOVA #
 g.pair <- pairwise.adonis2(g.bdist~Treatment, data = g.met)
 g.pair
 
+# Plot the results #
 plot_ordination(g_prop.ps, g_ord.nmds.wuni, color="Treatment", title="G Samples NMDS") +
   theme_prism() +
   geom_point(size = 6) 
 
-# H #
-h.ps <- subset_samples(final_ksp.ps, Site == 'G')
+# Perform MANOVA using the loading scores of the first 2 dimensions #
+g.met <- cbind(g.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "G"))
+g.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = g.met)
+summary(g.man)
+
+## H ##
+# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+h.ps <- subset_samples(spec_ksp.ps, Site == 'H')
+h.ps <- subset_taxa(h.ps, taxa_sums(h.ps) > 0)
 h.met <- as(sample_data(h.ps), 'data.frame')
 h_prop.ps <- transform_sample_counts(h.ps, function(otu) otu/sum(otu))
-h_ord.nmds.wuni <- ordinate(h_prop.ps, method="NMDS", distance="wunifrac")
-h.bdist <- phyloseq::distance(h.ps, method = "wunifrac")
+h_ord.nmds.wuni <- ordinate(h_prop.ps, method="NMDS", distance="bray")
+h.bdist <- phyloseq::distance(h.ps, method = "bray")
 
+# Perform PermANOVA #
 h.perm <- adonis2(h.bdist~Treatment, data = h.met)
 h.perm
 
+# Perform pairwise PermANOVA #
 h.pair <- pairwise.adonis2(h.bdist~Treatment, data = b.met)
 h.pair
 
+# Plot the results #
 plot_ordination(h_prop.ps, h_ord.nmds.wuni, color="Treatment", title="H Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+
+# Perform MANOVA using the loading scores of the first 2 dimensions #
+h.met <- cbind(h.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "H"))
+h.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = h.met)
+summary(h.man)
 
 #### Stacked Histograms ####
 # First we start by making a color pallette for each unique ASV #
 if(!requireNamespace("Polychrome")) install.packages("Polychrome")
 library(Polychrome); packageVersion("Polychrome")
-ksp.colr <- createPalette(ntaxa(final_ksp.ps),  c("#ff0000", "#00ff00", "#0000ff"))
+ksp.colr <- createPalette(ntaxa(spec_ksp.ps),  c("#ff0000", "#00ff00", "#0000ff"))
 ksp.colr <- as.data.frame(ksp.colr)
-rownames(ksp.colr) <- taxa_names(final_ksp.ps)
+rownames(ksp.colr) <- taxa_names(spec_ksp.ps)
 
 # Add a gray color for "Other"
-ksp.colr[2003,] <- "#D4D4D4" 
-rownames(ksp.colr)[2003] <- "Other" 
+ksp.colr[152,] <- "#D4D4D4" 
+rownames(ksp.colr)[152] <- "Other" 
 
 # Save 'ASV' as it's own unique level of taxonomy #
-final_ksp$tax$ASV <- taxa_names(final_ksp.ps)
-tax_table(final_ksp.ps) <- as.matrix(final_ksp$tax)
+spec.tax <- as.data.frame(tax_table(spec_ksp.ps))
+spec.tax$ASV <- taxa_names(spec_ksp.ps)
+tax_table(spec_ksp.ps) <- as.matrix(spec.tax)
 
-# Save a phyloseq Object that conatins only the samples of interest #
-myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
+## MycoBloom Sample ##
+# Save a phyloseq Object that contains only the samples of interest #
+myc.ps <- subset_samples(spec_ksp.ps, Treatment == "MycoBloom")
 myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 
-# Collect only the top 19 ASVs, and group the remaining ASVs into "Other" and save their names in their orders of abundance to make a subsetted palette for plotting #
-if(!requireNamespace("microbiomeutilities")) devtools::install_github("microsud/microbiomeutilities")
-library(microbiomeutilities); packageVersion('microbiomeutilities')
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_myc.name <- names(sort(taxa_sums(myc.ps), decreasing = TRUE))[1:9]
+hg_myc.name <- c(hg_myc.name, "Other")
+hg_myc.colr <- ksp.colr[hg_myc.name,]
 
-if(!requireNamespace("microbiome")) BiocManager::install("microbiome")
-library(microbiome); packageVersion("microbiome")
-
-hg_myc.ps <- aggregate_top_taxa2(myc.ps, top = 9, level = "ASV")
-hg_myc.name <- names(sort(taxa_sums(hg_myc.ps), decreasing = TRUE))
-hg_myc.colr <- hg_myc.colr[hg_myc.name,]
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_myc.ps <- merge_taxa(myc.ps, taxa_names(myc.ps)[!taxa_names(myc.ps) %in% hg_myc.name])
+taxa_names(hg_myc.ps)[2] <- "Other"
+tax_table(hg_myc.ps)[2, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_myc.df <- psmelt(hg_myc.ps)
 hg_myc.df$ASVs <- factor(hg_myc.df$ASV, levels = hg_myc.name)
-hg_myc.df$Soil <- factor(hg_myc.df$Treatment, levels = c("Control", "Low", "High"))
+hg_myc.df$Soil <- factor(hg_myc.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
 
 # Plot the histogram #
 hg_myc.plot <- ggplot(hg_myc.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
@@ -926,7 +1086,721 @@ hg_myc.plot <- ggplot(hg_myc.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
         legend.position = 'right')
 
+## Site A Samples ##
+# Save a phyloseq Object that contains only the samples of interest #
+hg_a.ps <- subset_samples(spec_ksp.ps, Site == "A" | Treatment == "MycoBloom")
+hg_a.ps <- subset_taxa(hg_a.ps, taxa_sums(hg_a.ps) > 0)
 
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_a.name <- names(sort(taxa_sums(hg_a.ps), decreasing = TRUE))[1:9]
+hg_a.name <- c(hg_a.name, "Other")
+hg_a.colr <- ksp.colr[hg_a.name,]
 
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_a.ps <- merge_taxa(hg_a.ps, taxa_names(hg_a.ps)[!taxa_names(hg_a.ps) %in% hg_a.name])
+taxa_names(hg_a.ps)[9] <- "Other"
+tax_table(hg_a.ps)[9, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_a.df <- psmelt(hg_a.ps)
+hg_a.df$ASVs <- factor(hg_a.df$ASV, levels = hg_a.name)
+hg_a.df$Soil <- factor(hg_a.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_a.plot <- ggplot(hg_a.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_a.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Site A")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+## Site B Samples ##
+# Save a phyloseq Object that contains only the samples of interest #
+hg_b.ps <- subset_samples(spec_ksp.ps, Site == "B" | Treatment == "MycoBloom")
+hg_b.ps <- subset_taxa(hg_b.ps, taxa_sums(hg_b.ps) > 0)
+
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_b.name <- names(sort(taxa_sums(hg_b.ps), decreasing = TRUE))[1:9]
+hg_b.name <- c(hg_b.name, "Other")
+hg_b.colr <- ksp.colr[hg_b.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_b.ps <- merge_taxa(hg_b.ps, taxa_names(hg_b.ps)[!taxa_names(hg_b.ps) %in% hg_b.name])
+taxa_names(hg_b.ps)[6] <- "Other"
+tax_table(hg_b.ps)[6, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_b.df <- psmelt(hg_b.ps)
+hg_b.df$ASVs <- factor(hg_b.df$ASV, levels = hg_b.name)
+hg_b.df$Soil <- factor(hg_b.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_b.plot <- ggplot(hg_b.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_b.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Site B")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+## Site C Samples ##
+# Save a phyloseq Object that contains only the samples of interest #
+hg_c.ps <- subset_samples(spec_ksp.ps, Site == "C" | Treatment == "MycoBloom")
+hg_c.ps <- subset_taxa(hg_c.ps, taxa_sums(hg_c.ps) > 0)
+
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_c.name <- names(sort(taxa_sums(hg_c.ps), decreasing = TRUE))[1:9]
+hg_c.name <- c(hg_c.name, "Other")
+hg_c.colr <- ksp.colr[hg_c.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_c.ps <- merge_taxa(hg_c.ps, taxa_names(hg_c.ps)[!taxa_names(hg_c.ps) %in% hg_c.name])
+taxa_names(hg_c.ps)[5] <- "Other"
+tax_table(hg_c.ps)[5, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_c.df <- psmelt(hg_c.ps)
+hg_c.df$ASVs <- factor(hg_c.df$ASV, levels = hg_c.name)
+hg_c.df$Soil <- factor(hg_c.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_c.plot <- ggplot(hg_c.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_c.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Site C")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+## Site D Samples ##
+# Save a phyloseq Object that contains only the samples of interest #
+hg_d.ps <- subset_samples(spec_ksp.ps, Site == "D" | Treatment == "MycoBloom")
+hg_d.ps <- subset_taxa(hg_d.ps, taxa_sums(hg_d.ps) > 0)
+
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_d.name <- names(sort(taxa_sums(hg_d.ps), decreasing = TRUE))[1:9]
+hg_d.name <- c(hg_d.name, "Other")
+hg_d.colr <- ksp.colr[hg_d.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_d.ps <- merge_taxa(hg_d.ps, taxa_names(hg_d.ps)[!taxa_names(hg_d.ps) %in% hg_d.name])
+taxa_names(hg_d.ps)[6] <- "Other"
+tax_table(hg_d.ps)[6, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_d.df <- psmelt(hg_d.ps)
+hg_d.df$ASVs <- factor(hg_d.df$ASV, levels = hg_d.name)
+hg_d.df$Soil <- factor(hg_d.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_d.plot <- ggplot(hg_d.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_d.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Site D")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+## Site E Samples ##
+# Save a phyloseq Object that contains only the samples of interest #
+hg_e.ps <- subset_samples(spec_ksp.ps, Site == "E" | Treatment == "MycoBloom")
+hg_e.ps <- subset_taxa(hg_e.ps, taxa_sums(hg_e.ps) > 0)
+
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_e.name <- names(sort(taxa_sums(hg_e.ps), decreasing = TRUE))[1:9]
+hg_e.name <- c(hg_e.name, "Other")
+hg_e.colr <- ksp.colr[hg_e.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_e.ps <- merge_taxa(hg_e.ps, taxa_names(hg_e.ps)[!taxa_names(hg_e.ps) %in% hg_e.name])
+taxa_names(hg_e.ps)[9] <- "Other"
+tax_table(hg_e.ps)[9, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_e.df <- psmelt(hg_e.ps)
+hg_e.df$ASVs <- factor(hg_e.df$ASV, levels = hg_e.name)
+hg_e.df$Soil <- factor(hg_e.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_e.plot <- ggplot(hg_e.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_e.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Site E")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+## Site F Samples ##
+# Save a phyloseq Object that contains only the samples of interest #
+hg_f.ps <- subset_samples(spec_ksp.ps, Site == "F" | Treatment == "MycoBloom")
+hg_f.ps <- subset_taxa(hg_f.ps, taxa_sums(hg_f.ps) > 0)
+
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_f.name <- names(sort(taxa_sums(hg_f.ps), decreasing = TRUE))[1:9]
+hg_f.name <- c(hg_f.name, "Other")
+hg_f.colr <- ksp.colr[hg_f.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_f.ps <- merge_taxa(hg_f.ps, taxa_names(hg_f.ps)[!taxa_names(hg_f.ps) %in% hg_f.name])
+taxa_names(hg_f.ps)[9] <- "Other"
+tax_table(hg_f.ps)[9, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_f.df <- psmelt(hg_f.ps)
+hg_f.df$ASVs <- factor(hg_f.df$ASV, levels = hg_f.name)
+hg_f.df$Soil <- factor(hg_f.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_f.plot <- ggplot(hg_f.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_f.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Site F")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+## Site G Samples ##
+# Save a phyloseq Object that contains only the samples of interest #
+hg_g.ps <- subset_samples(spec_ksp.ps, Site == "G" | Treatment == "MycoBloom")
+hg_g.ps <- subset_taxa(hg_g.ps, taxa_sums(hg_g.ps) > 0)
+
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_g.name <- names(sort(taxa_sums(hg_g.ps), decreasing = TRUE))[1:9]
+hg_g.name <- c(hg_g.name, "Other")
+hg_g.colr <- ksp.colr[hg_g.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_g.ps <- merge_taxa(hg_g.ps, taxa_names(hg_g.ps)[!taxa_names(hg_g.ps) %in% hg_g.name])
+taxa_names(hg_g.ps)[5] <- "Other"
+tax_table(hg_g.ps)[5, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_g.df <- psmelt(hg_g.ps)
+hg_g.df$ASVs <- factor(hg_g.df$ASV, levels = hg_g.name)
+hg_g.df$Soil <- factor(hg_g.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_g.plot <- ggplot(hg_g.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_g.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Site G")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+## Site H Samples ##
+# Save a phyloseq Object that contains only the samples of interest #
+hg_h.ps <- subset_samples(spec_ksp.ps, Site == "H" | Treatment == "MycoBloom")
+hg_h.ps <- subset_taxa(hg_h.ps, taxa_sums(hg_h.ps) > 0)
+
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_h.name <- names(sort(taxa_sums(hg_h.ps), decreasing = TRUE))[1:9]
+hg_h.name <- c(hg_h.name, "Other")
+hg_h.colr <- ksp.colr[hg_h.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_h.ps <- merge_taxa(hg_h.ps, taxa_names(hg_h.ps)[!taxa_names(hg_h.ps) %in% hg_h.name])
+taxa_names(hg_h.ps)[10] <- "Other"
+tax_table(hg_h.ps)[10, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_h.df <- psmelt(hg_h.ps)
+hg_h.df$ASVs <- factor(hg_h.df$ASV, levels = hg_h.name)
+hg_h.df$Soil <- factor(hg_h.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_h.plot <- ggplot(hg_h.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_h.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Site H")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+## All Samples Across Sites Pooled ##
+hg_ksp.colr <- ksp.colr[hg_myc.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_ksp.ps <- merge_taxa(spec_ksp.ps, taxa_names(spec_ksp.ps)[!taxa_names(spec_ksp.ps) %in% hg_myc.name])
+taxa_names(hg_ksp.ps)[2] <- "Other"
+tax_table(hg_ksp.ps)[2, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_ksp.df <- psmelt(hg_ksp.ps)
+hg_ksp.df$ASVs <- factor(hg_ksp.df$ASV, levels = hg_myc.name)
+hg_ksp.df$Soil <- factor(hg_ksp.df$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
+
+# Plot the histogram #
+hg_ksp.plot <- ggplot(hg_ksp.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_ksp.colr) +
+  scale_y_continuous(sec.axis = dup_axis(name = "Across All Sites")) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        legend.position = 'right')
+
+#### Set Plot for overlapping taxa with MycoBloom and Treatments ####
+# Save the names of the taxa found in the mycobloom sample #
+myc.name <- taxa_names(myc.ps)
+
+# Subset the whole phyloseq object by treatments and filter to only contain taxa found in the MycoBloom #
+con.ps <- subset_samples(spec_ksp.ps, Treatment == "Control")
+con.ps <- subset_taxa(con.ps, taxa_names(con.ps) %in% myc.name)
+con.ps <- subset_taxa(con.ps, taxa_sums(con.ps) > 0)
+con.name <- taxa_names(con.ps)
+
+hig.ps <- subset_samples(spec_ksp.ps, Treatment == "High")
+hig.ps <- subset_taxa(hig.ps, taxa_names(hig.ps) %in% myc.name)
+hig.ps <- subset_taxa(hig.ps, taxa_sums(hig.ps) > 0)
+hig.name <- taxa_names(hig.ps)
+
+low.ps <- subset_samples(spec_ksp.ps, Treatment == "Low")
+low.ps <- subset_taxa(low.ps, taxa_names(low.ps) %in% myc.name)
+low.ps <- subset_taxa(low.ps, taxa_sums(low.ps) > 0)
+low.name <- taxa_names(low.ps)
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+if(!requireNamespace("ComplexUpset")) install.packages("ComplexUpset")
+library(ComplexUpset); packageVersion("ComplexUpset")
+all.name <- list(myc = myc.name, con = con.name, hig = hig.name, low = low.name)
+all.asv <- data.frame(ASV = myc.name)
+for (group in names(all.name)) {
+  all.asv[[group]] <- all.asv$ASV %in% all.name[[group]]
+}
+
+# Create the set plot #
+myc.set <- upset(
+  all.asv,
+  intersect = c("myc", "con", "low", "hig"),
+  name = "Shared Inoculant ASVs",
+  queries = list(
+    upset_query(intersect = c("myc", "hig", "low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "hig"), color = "black", fill = "blue"),
+    upset_query(intersect = "myc", color = "black", fill = "orange"))
+  )
+
+myc_nc.name <- filter(all.asv, hig == "TRUE" | low == "TRUE")
+myc_nc.name <- filter(myc_nc.name, con == "FALSE")
+
+myc_myc.name <- filter(all.asv, con == "FALSE" & hig == "FALSE" & low == "FALSE")
+
+## Site A Set Plot
+a_con.ps <- subset_samples(a.ps, Treatment == "Control")
+a_con.ps <- subset_taxa(a_con.ps, taxa_names(a_con.ps) %in% myc.name)
+a_con.ps <- subset_taxa(a_con.ps, taxa_sums(a_con.ps) > 0)
+a_con.name <- taxa_names(a_con.ps)
+
+a_hig.ps <- subset_samples(a.ps, Treatment == "High")
+a_hig.ps <- subset_taxa(a_hig.ps, taxa_names(a_hig.ps) %in% myc.name)
+a_hig.ps <- subset_taxa(a_hig.ps, taxa_sums(a_hig.ps) > 0)
+a_hig.name <- taxa_names(a_hig.ps)
+
+a_low.ps <- subset_samples(a.ps, Treatment == "Low")
+a_low.ps <- subset_taxa(a_low.ps, taxa_names(a_low.ps) %in% myc.name)
+a_low.ps <- subset_taxa(a_low.ps, taxa_sums(a_low.ps) > 0)
+a_low.name <- taxa_names(a_low.ps)
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+a.name <- list(myc = myc.name, a_con = a_con.name, a_hig = a_hig.name, a_low = a_low.name)
+a.asv <- data.frame(ASV = myc.name)
+for (group in names(a.name)) {
+  a.asv[[group]] <- a.asv$ASV %in% a.name[[group]]}
+
+# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
+a_nc.name <- filter(a.asv, a_hig == "TRUE" | a_low == "TRUE")
+a_nc.name <- filter(a_nc.name, a_con == "FALSE")
+
+a_myc.name <- filter(a.asv, a_con == "FALSE" & a_hig == "FALSE" & a_low == "FALSE")
+
+# Create the set plot #
+a.set <- upset(
+  a.asv,
+  intersect = c("myc", "a_con", "a_low", "a_hig"),
+  base_annotations = list(
+    'Intersection size' = intersection_size(width = 0.9)
+  ),
+  queries = list(
+    upset_query(intersect = "myc", color = "black", fill = "orange"),
+    upset_query(intersect = c("myc", "a_hig", "a_low"), color = "black", fill = "blue"))
+  )
+
+## Site B Set Plot
+b_con.ps <- subset_samples(b.ps, Treatment == "Control")
+b_con.ps <- subset_taxa(b_con.ps, taxa_names(b_con.ps) %in% myc.name)
+b_con.ps <- subset_taxa(b_con.ps, taxa_sums(b_con.ps) > 0)
+b_con.name <- taxa_names(b_con.ps)
+
+b_hig.ps <- subset_samples(b.ps, Treatment == "High")
+b_hig.ps <- subset_taxa(b_hig.ps, taxa_names(b_hig.ps) %in% myc.name)
+b_hig.ps <- subset_taxa(b_hig.ps, taxa_sums(b_hig.ps) > 0)
+b_hig.name <- taxa_names(b_hig.ps)
+
+b_low.ps <- subset_samples(b.ps, Treatment == "Low")
+b_low.ps <- subset_taxa(b_low.ps, taxa_names(b_low.ps) %in% myc.name)
+b_low.ps <- subset_taxa(b_low.ps, taxa_sums(b_low.ps) > 0)
+b_low.name <- taxa_names(b_low.ps)
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+b.name <- list(myc = myc.name, b_con = b_con.name, b_hig = b_hig.name, b_low = b_low.name)
+b.asv <- data.frame(ASV = myc.name)
+for (group in names(b.name)) {
+  b.asv[[group]] <- b.asv$ASV %in% b.name[[group]]}
+
+# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
+b_nc.name <- filter(b.asv, b_hig == "TRUE" | b_low == "TRUE")
+b_nc.name <- filter(b_nc.name, b_con == "FALSE")
+
+b_myc.name <- filter(b.asv, b_con == "FALSE" & b_hig == "FALSE" & b_low == "FALSE")
+
+# Create the set plot #
+b.set <- upset(
+  b.asv,
+  intersect = c("myc", "b_con", "b_low", "b_hig"),
+  base_annotations = list(
+    'Intersection size' = intersection_size(width = 0.9)
+  ),
+  queries = list(
+    upset_query(intersect = "myc", color = "black", fill = "orange"),
+    upset_query(intersect = c("myc", "b_hig", "b_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "b_low"), color = "black", fill = "blue"))
+  )
+
+## Site C Set Plot
+c_con.ps <- subset_samples(c.ps, Treatment == "Control")
+c_con.ps <- subset_taxa(c_con.ps, taxa_names(c_con.ps) %in% myc.name)
+c_con.ps <- subset_taxa(c_con.ps, taxa_sums(c_con.ps) > 0)
+c_con.name <- taxa_names(c_con.ps)
+
+c_hig.ps <- subset_samples(c.ps, Treatment == "High")
+c_hig.ps <- subset_taxa(c_hig.ps, taxa_names(c_hig.ps) %in% myc.name)
+c_hig.ps <- subset_taxa(c_hig.ps, taxa_sums(c_hig.ps) > 0)
+c_hig.name <- taxa_names(c_hig.ps)
+
+c_low.ps <- subset_samples(c.ps, Treatment == "Low")
+c_low.ps <- subset_taxa(c_low.ps, taxa_names(c_low.ps) %in% myc.name)
+c_low.ps <- subset_taxa(c_low.ps, taxa_sums(c_low.ps) > 0)
+c_low.name <- taxa_names(c_low.ps)
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+c.name <- list(myc = myc.name, c_con = c_con.name, c_hig = c_hig.name, c_low = c_low.name)
+c.asv <- data.frame(ASV = myc.name)
+for (group in names(c.name)) {
+  c.asv[[group]] <- c.asv$ASV %in% c.name[[group]]}
+
+# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
+c_nc.name <- filter(c.asv, c_hig == "TRUE" | c_low == "TRUE")
+c_nc.name <- filter(c_nc.name, c_con == "FALSE")
+
+c_myc.name <- filter(c.asv, c_con == "FALSE" & c_hig == "FALSE" & c_low == "FALSE")
+
+# Create the set plot #
+c.set <- upset(
+  c.asv,
+  intersect = c("myc", "c_con", "c_low", "c_hig"),
+  base_annotations = list(
+    'Intersection size' = intersection_size(width = 0.9)
+  ),
+  queries = list(
+    upset_query(intersect = "myc", color = "black", fill = "orange"),
+    upset_query(intersect = c("myc", "c_hig", "c_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "c_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "c_hig"), color = "black", fill = "blue"))
+)
+
+## Site D Set Plot
+d_con.ps <- subset_samples(d.ps, Treatment == "Control")
+d_con.ps <- subset_taxa(d_con.ps, taxa_names(d_con.ps) %in% myc.name)
+d_con.ps <- subset_taxa(d_con.ps, taxa_sums(d_con.ps) > 0)
+d_con.name <- taxa_names(d_con.ps)
+
+d_hig.ps <- subset_samples(d.ps, Treatment == "High")
+d_hig.ps <- subset_taxa(d_hig.ps, taxa_names(d_hig.ps) %in% myc.name)
+d_hig.ps <- subset_taxa(d_hig.ps, taxa_sums(d_hig.ps) > 0)
+d_hig.name <- taxa_names(d_hig.ps)
+
+d_low.ps <- subset_samples(d.ps, Treatment == "Low")
+d_low.ps <- subset_taxa(d_low.ps, taxa_names(d_low.ps) %in% myc.name)
+d_low.ps <- subset_taxa(d_low.ps, taxa_sums(d_low.ps) > 0)
+d_low.name <- taxa_names(d_low.ps)
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+d.name <- list(myc = myc.name, d_con = d_con.name, d_hig = d_hig.name, d_low = d_low.name)
+d.asv <- data.frame(ASV = myc.name)
+for (group in names(d.name)) {
+  d.asv[[group]] <- d.asv$ASV %in% d.name[[group]]}
+
+# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
+d_nc.name <- filter(d.asv, d_hig == "TRUE" | d_low == "TRUE")
+d_nc.name <- filter(d_nc.name, d_con == "FALSE")
+
+d_myc.name <- filter(d.asv, d_con == "FALSE" & d_hig == "FALSE" & d_low == "FALSE")
+
+# Create the set plot #
+d.set <- upset(
+  d.asv,
+  intersect = c("myc", "d_con", "d_low", "d_hig"),
+  base_annotations = list(
+    'Intersection size' = intersection_size(width = 0.9)
+  ),
+  queries = list(
+    upset_query(intersect = "myc", color = "black", fill = "orange"),
+    upset_query(intersect = c("myc", "d_hig", "d_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "d_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "d_hig"), color = "black", fill = "blue"))
+)
+
+## Site E Set Plot
+e_con.ps <- subset_samples(e.ps, Treatment == "Control")
+e_con.ps <- subset_taxa(e_con.ps, taxa_names(e_con.ps) %in% myc.name)
+e_con.ps <- subset_taxa(e_con.ps, taxa_sums(e_con.ps) > 0)
+e_con.name <- taxa_names(e_con.ps)
+
+e_hig.ps <- subset_samples(e.ps, Treatment == "High")
+e_hig.ps <- subset_taxa(e_hig.ps, taxa_names(e_hig.ps) %in% myc.name)
+e_hig.ps <- subset_taxa(e_hig.ps, taxa_sums(e_hig.ps) > 0)
+e_hig.name <- taxa_names(e_hig.ps)
+
+e_low.ps <- subset_samples(e.ps, Treatment == "Low")
+e_low.ps <- subset_taxa(e_low.ps, taxa_names(e_low.ps) %in% myc.name)
+e_low.ps <- subset_taxa(e_low.ps, taxa_sums(e_low.ps) > 0)
+e_low.name <- taxa_names(e_low.ps)
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+e.name <- list(myc = myc.name, e_con = e_con.name, e_hig = e_hig.name, e_low = e_low.name)
+e.asv <- data.frame(ASV = myc.name)
+for (group in names(e.name)) {
+  e.asv[[group]] <- e.asv$ASV %in% e.name[[group]]}
+
+# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
+e_nc.name <- filter(e.asv, e_hig == "TRUE" | e_low == "TRUE")
+e_nc.name <- filter(e_nc.name, e_con == "FALSE")
+
+e_myc.name <- filter(e.asv, e_con == "FALSE" & e_hig == "FALSE" & e_low == "FALSE")
+
+# Create the set plot #
+e.set <- upset(
+  e.asv,
+  intersect = c("myc", "e_con", "e_low", "e_hig"),
+  base_annotations = list(
+    'Intersection size' = intersection_size(width = 0.9)
+  ),
+  queries = list(
+    upset_query(intersect = "myc", color = "black", fill = "orange"))
+  )
+
+## Site F Set Plot
+f_con.ps <- subset_samples(f.ps, Treatment == "Control")
+f_con.ps <- subset_taxa(f_con.ps, taxa_names(f_con.ps) %in% myc.name)
+f_con.ps <- subset_taxa(f_con.ps, taxa_sums(f_con.ps) > 0)
+f_con.name <- taxa_names(f_con.ps)
+
+f_hig.ps <- subset_samples(f.ps, Treatment == "High")
+f_hig.ps <- subset_taxa(f_hig.ps, taxa_names(f_hig.ps) %in% myc.name)
+f_hig.ps <- subset_taxa(f_hig.ps, taxa_sums(f_hig.ps) > 0)
+f_hig.name <- taxa_names(f_hig.ps)
+
+f_low.ps <- subset_samples(f.ps, Treatment == "Low")
+f_low.ps <- subset_taxa(f_low.ps, taxa_names(f_low.ps) %in% myc.name)
+f_low.ps <- subset_taxa(f_low.ps, taxa_sums(f_low.ps) > 0)
+f_low.name <- taxa_names(f_low.ps)
+
+# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
+f_nc.name <- filter(f.asv, f_hig == "TRUE" | f_low == "TRUE")
+f_nc.name <- filter(f_nc.name, f_con == "FALSE")
+
+f_myc.name <- filter(f.asv, f_con == "FALSE" & f_hig == "FALSE" & f_low == "FALSE")
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+f.name <- list(myc = myc.name, f_con = f_con.name, f_hig = f_hig.name, f_low = f_low.name)
+f.asv <- data.frame(ASV = myc.name)
+for (group in names(f.name)) {
+  f.asv[[group]] <- f.asv$ASV %in% f.name[[group]]}
+
+# Create the set plot #
+f.set <- upset(
+  f.asv,
+  intersect = c("myc", "f_con", "f_low", "f_hig"),
+  base_annotations = list(
+    'Intersection size' = intersection_size(width = 0.9)
+  ),
+  queries = list(
+    upset_query(intersect = "myc", color = "black", fill = "orange"),
+    upset_query(intersect = c("myc", "f_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "f_hig"), color = "black", fill = "blue"))
+)
+
+## Site G Set Plot
+g_con.ps <- subset_samples(g.ps, Treatment == "Control")
+g_con.ps <- subset_taxa(g_con.ps, taxa_names(g_con.ps) %in% myc.name)
+g_con.ps <- subset_taxa(g_con.ps, taxa_sums(g_con.ps) > 0)
+g_con.name <- taxa_names(g_con.ps)
+
+g_hig.ps <- subset_samples(g.ps, Treatment == "High")
+g_hig.ps <- subset_taxa(g_hig.ps, taxa_names(g_hig.ps) %in% myc.name)
+g_hig.ps <- subset_taxa(g_hig.ps, taxa_sums(g_hig.ps) > 0)
+g_hig.name <- taxa_names(g_hig.ps)
+
+g_low.ps <- subset_samples(g.ps, Treatment == "Low")
+g_low.ps <- subset_taxa(g_low.ps, taxa_names(g_low.ps) %in% myc.name)
+g_low.ps <- subset_taxa(g_low.ps, taxa_sums(g_low.ps) > 0)
+g_low.name <- taxa_names(g_low.ps)
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+g.name <- list(myc = myc.name, g_con = g_con.name, g_hig = g_hig.name, g_low = g_low.name)
+g.asv <- data.frame(ASV = myc.name)
+for (group in names(g.name)) {
+  g.asv[[group]] <- g.asv$ASV %in% g.name[[group]]}
+
+# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
+g_nc.name <- filter(g.asv, g_hig == "TRUE" | g_low == "TRUE")
+g_nc.name <- filter(g_nc.name, g_con == "FALSE")
+
+g_myc.name <- filter(g.asv, g_con == "FALSE" & g_hig == "FALSE" & g_low == "FALSE")
+
+# Create the set plot #
+g.set <- upset(
+  g.asv,
+  intersect = c("myc", "g_con", "g_low", "g_hig"),
+  base_annotations = list(
+    'Intersection size' = intersection_size(width = 0.9)
+  ),
+  queries = list(
+    upset_query(intersect = "myc", color = "black", fill = "orange"),
+    upset_query(intersect = c("myc", "g_hig", "g_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "g_hig"), color = "black", fill = "blue"))
+)
+
+## Site H Set Plot
+h_con.ps <- subset_samples(h.ps, Treatment == "Control")
+h_con.ps <- subset_taxa(h_con.ps, taxa_names(h_con.ps) %in% myc.name)
+h_con.ps <- subset_taxa(h_con.ps, taxa_sums(h_con.ps) > 0)
+h_con.name <- taxa_names(h_con.ps)
+
+h_hig.ps <- subset_samples(h.ps, Treatment == "High")
+h_hig.ps <- subset_taxa(h_hig.ps, taxa_names(h_hig.ps) %in% myc.name)
+h_hig.ps <- subset_taxa(h_hig.ps, taxa_sums(h_hig.ps) > 0)
+h_hig.name <- taxa_names(h_hig.ps)
+
+h_low.ps <- subset_samples(h.ps, Treatment == "Low")
+h_low.ps <- subset_taxa(h_low.ps, taxa_names(h_low.ps) %in% myc.name)
+h_low.ps <- subset_taxa(h_low.ps, taxa_sums(h_low.ps) > 0)
+h_low.name <- taxa_names(h_low.ps)
+
+# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
+h.name <- list(myc = myc.name, h_con = h_con.name, h_hig = h_hig.name, h_low = h_low.name)
+h.asv <- data.frame(ASV = myc.name)
+for (group in names(h.name)) {
+  h.asv[[group]] <- h.asv$ASV %in% h.name[[group]]}
+
+# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
+h_nc.name <- filter(h.asv, h_hig == "TRUE" | h_low == "TRUE")
+h_nc.name <- filter(h_nc.name, h_con == "FALSE")
+
+h_myc.name <- filter(h.asv, h_con == "FALSE" & h_hig == "FALSE" & h_low == "FALSE")
+
+# Create the set plot #
+h.set <- upset(
+  h.asv,
+  intersect = c("myc", "h_con", "h_low", "h_hig"),
+  base_annotations = list(
+    'Intersection size' = intersection_size(width = 0.9)
+  ),
+  queries = list(
+    upset_query(intersect = "myc", color = "black", fill = "orange"),
+    upset_query(intersect = c("myc", "h_hig", "h_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "h_low"), color = "black", fill = "blue"),
+    upset_query(intersect = c("myc", "h_hig"), color = "black", fill = "blue"))
+  )
 
 save.image("./ksp_amf.RData")
