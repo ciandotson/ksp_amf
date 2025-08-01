@@ -200,7 +200,7 @@ resave(final.track, file = 'abridged.RData')
 
 #### Assigning Taxonomy ####
 # To assign taxonomy, we use the MaarJAM database as a reference that has been adapted to be read by dada2 #
-ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", multithread = TRUE, verbose = TRUE)
+ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", minBoot = 90, multithread = TRUE, verbose = TRUE)
 ksp.taxa <- as.data.frame(ksp.taxa)
 colnames(ksp.taxa) <- c('Family', "Genus", 'Species')
 
@@ -853,11 +853,11 @@ alpha.plot <- (cha.plot) /
 resave(alpha.plot, file = "./abridged.RData")
 
 #### Beta Diversity ####
-# For the entire dataset, caluclate the weighted unifrac distances from the total sum scaled (TSS) data # 
+# For the entire dataset, calculate the weighted unifrac distances from the total sum scaled (TSS) data # 
 set.seed(248)
 ksp_prop.ps <- transform_sample_counts(spec_ksp.ps, function(otu) otu/sum(otu))
 ord.nmds.wuni <- ordinate(ksp_prop.ps, method="NMDS", distance="bray")
-ksp.bdist <- phyloseq::distance(spec_ksp.ps, method = "bray")
+ksp.bdist <- phyloseq::distance(ksp_prop.ps, method = "bray")
 
 # Perform PermANOVA for the entire dataset
 if(!requireNamespace("vegan")) install.package("vegan")
@@ -870,7 +870,7 @@ ksp.perm
 resave(ksp_by.perm, file = './abridged.RData')
 resave(ksp.perm, file = './abridged.RData')
 
-beta.plot<- plot_ordination(ksp_prop.ps, ord.nmds.wuni, color="Site", shape = 'Treatment', title="NMDS") +
+beta.plot<- plot_ordination(ksp_prop.ps, ord.nmds.wuni, shape = "Treatment", color="Site", title="NMDS") +
   theme_prism() +
   geom_point(size = 6) 
 
@@ -884,7 +884,7 @@ if(!requireNamespace("pairwiseAdonis")) devtools::install_github("pmartinezarbiz
 library(pairwiseAdonis); packageVersion("pairwiseAdonis")
 
 ## A ##
-# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+# Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 a.ps <- subset_samples(spec_ksp.ps, Site == 'A')
 a.ps <- subset_taxa(a.ps, taxa_sums(a.ps) > 0)
 a.met <- as(sample_data(a.ps), 'data.frame')
@@ -916,7 +916,7 @@ a_man.sum <- summary(a.man)
 resave(a_sum.man, file = './abridged.RData')
 
 ## B ##
-# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+# Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 b.ps <- subset_samples(spec_ksp.ps, Site == 'B')
 b.ps <- subset_taxa(b.ps, taxa_sums(b.ps) > 0)
 b.met <- as(sample_data(b.ps), 'data.frame')
@@ -947,7 +947,7 @@ b_man.sum <- summary(b.man)
 resave(b_man.sum, file = 'abridged.RData')
 
 ## C ##
-# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+# Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 c.ps <- subset_samples(spec_ksp.ps, Site == 'C')
 c.ps <- subset_taxa(c.ps, taxa_sums(c.ps) > 0)
 c.met <- as(sample_data(c.ps), 'data.frame')
@@ -968,7 +968,8 @@ resave(c.pair, file = './abridged.RData')
 # Plot the results #
 c_beta.plot <- plot_ordination(c_prop.ps, c_ord.nmds.wuni, color="Treatment", title="C Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6)
+  geom_point(size = 6) +
+  annotate(geom = 'text', x = 0.1, y = -0.60, label = 'P-value = 0.008', size = 8)
 resave(c_beta.plot, './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
@@ -977,9 +978,8 @@ c.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = c.met)
 c_man.sum <- summary(c.man)
 resave(c_man.sum, file = './abridged.RData')
 
-
 ## D ##
-# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+# Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 d.ps <- subset_samples(spec_ksp.ps, Site == 'D')
 d.ps <- subset_taxa(d.ps, taxa_sums(d.ps) > 0)
 d.met <- as(sample_data(d.ps), 'data.frame')
@@ -1001,15 +1001,16 @@ resave(d.pair, file = './abridged.RData')
 d_beta.plot <- plot_ordination(d_prop.ps, d_ord.nmds.wuni, color="Treatment", title="D Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
-resave(d_beta.plot, file = 'abridged.RData')
+resave(d_beta.plot, file = './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
 d.met <- cbind(d.met, filter(as.data.frame(ord.nmds.wuni$points), substr(rownames(ord.nmds.wuni$points),1,1) == "D"))
 d.man <- manova(cbind(MDS1,MDS2) ~ Treatment, data = d.met)
 d_man.sum <- summary(d.man)
+resave(d_man.sum, file = './abridged.RData')
 
 ## E ##
-# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+# Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 e.ps <- subset_samples(spec_ksp.ps, Site == 'E')
 e.ps <- subset_taxa(e.ps, taxa_sums(e.ps) > 0)
 e.met <- as(sample_data(e.ps), 'data.frame')
@@ -1030,7 +1031,8 @@ resave(e.pair, file = 'abridged.RData')
 # Plot the results #
 e_beta.plot <- plot_ordination(e_prop.ps, e_ord.nmds.wuni, color="Treatment", title="E Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6)
+  geom_point(size = 6) +
+  annotate(geom = 'text', x = -0.1, y = -0.50, label = 'P-value = 0.003', size = 8)
 resave(e_beta.plot, file = './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
@@ -1040,7 +1042,7 @@ e_man.sum <- summary(e.man)
 resave(e_man.sum, file = 'abridged.RData')
 
 ## F ##
-# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+# Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 f.ps <- subset_samples(spec_ksp.ps, Site == 'F')
 f.ps <- subset_taxa(f.ps, taxa_sums(f.ps) > 0)
 f.met <- as(sample_data(f.ps), 'data.frame')
@@ -1071,7 +1073,7 @@ f_man.sum <- summary(f.man)
 resave(f_man.sum, file = './abridged.RData')
 
 ## G ##
-# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+# Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 g.ps <- subset_samples(spec_ksp.ps, Site == 'G')
 g.ps <- subset_taxa(g.ps, taxa_sums(g.ps) > 0)
 g.met <- as(sample_data(g.ps), 'data.frame')
@@ -1092,7 +1094,7 @@ resave(g.pair, file = './abridged.RData')
 # Plot the results #
 g_beta.plot <- plot_ordination(g_prop.ps, g_ord.nmds.wuni, color="Treatment", title="G Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6) 
+  geom_point(size = 6)
 resave(g_beta.plot, file = './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
@@ -1102,7 +1104,7 @@ g_man.sum <- summary(g.man)
 resave(g.man.sum, file = './abridged.RData')
 
 ## H ##
-# Create a phyloseq object with just the sites of interest and caluclate weighted unifrac distance #
+# Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 h.ps <- subset_samples(spec_ksp.ps, Site == 'H')
 h.ps <- subset_taxa(h.ps, taxa_sums(h.ps) > 0)
 h.met <- as(sample_data(h.ps), 'data.frame')
@@ -1123,7 +1125,8 @@ resave(h.pair, file = './h.pair')
 # Plot the results #
 h_beta.plot <- plot_ordination(h_prop.ps, h_ord.nmds.wuni, color="Treatment", title="H Samples NMDS") +
   theme_prism() +
-  geom_point(size = 6)
+  geom_point(size = 6) +
+  annotate(geom = 'text', x = 0.1, y = -0.60, label = 'P-value = 0.006', size = 8)
 resave(h_beta.plot, file = './abridged.RData')
 
 # Perform MANOVA using the loading scores of the first 2 dimensions #
@@ -1942,5 +1945,9 @@ h.set <- upset(
     upset_query(intersect = c("myc", "h_hig"), color = "black", fill = "blue"))
   )
 resave(h.set, file = './abridged.RData')
+
+tax_check.ps <- subset_taxa(spec_ksp.ps, taxa_names(spec_ksp.ps) %in% taxa_names(myc.ps))
+tax_check.ps <- subset_samples(tax_check.ps, Treatment != 'MycoBloom')
+decompose_ps(tax_check.ps, 'tax_check')
 
 save.image("./ksp_amf.RData")
