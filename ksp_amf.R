@@ -28,7 +28,7 @@ for_reads <- opt$forward
 
 # This command moves all of the output to a log file 'ksp_amf.log 
 sink(file = './ksp_amf.log', append = TRUE, type = c("output", "message")) # Redirects stdout (e.g., print, cat) and stderr (e.g., warnings, message) #
-
+cat("## Script started at", Sys.time(), "\n\n")
 # This string of commands allows the Rscript to find the forward reads, which, for those seeking to reproduce #
 # our results, will have to download the reads from Sequence Read Archive (SRA). All of the other relevant information #
 # for this pipeline, such as the metadata and the non-R scripts, are found in the github and are automatically downloaded #
