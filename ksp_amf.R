@@ -190,9 +190,13 @@ library(cgwtools); packageVersion('cgwtools')
 
 resave(ksp.met, file = "./abridged.RData")
 
+# make sure the rownames of the metadata tables matches the column names of the ASV table #
+rownames(nochim_ksp.st) <- rownames(ksp.met)
+
 # Finally, we can track how many reads passed each step of the pipeline with the code below #
 getN <- function(x) sum(getUniques(x))
-final.track <- cbind(prefilt.track[,1], prefilt.track[,2], postfilt.track[,2], sapply(for.dada, getN), colSums(nochim_ksp.st))
+final.track <- cbind(prefilt.track[,1], prefilt.track[,2], postfilt.track[,2], sapply(for.dada, getN), rowSums(nochim_ksp.st))
+rownames(final.track) <- rownames(ksp.met)
 colnames(final.track) <- c("pre-cutadapt", "post-cutadapt", "filtered", "denoised", "nonchim")
 final.track <- as.data.frame(final.track)
 
@@ -206,9 +210,6 @@ colnames(ksp.taxa) <- c('Family', "Genus", 'Species')
 
 # Finally, we can change the format of our ASV table ("nochim_ksp.st") and taxonomy tables ("ksp.taxa") into more convenient formats #
 ksp.taxa <- as.matrix(ksp.taxa)
-
-# make sure the rownames of the metadata tables matches the column names of the ASV table #
-rownames(nochim_ksp.st) <- rownames(ksp.met)
 
 # Save the taxonomy table to the abridged .RData file #
 resave(ksp.taxa, file = "./abridged.RData")
@@ -477,13 +478,20 @@ resave(ksp.rich, file = './abridged.RData')
 if(!requireNamespace("car")) install.packages("car")
 library(car); packageVersion("car")
 
+if(!requireNamespace("lmerTest")) install.packages("lmerTest")
+library(lmerTest); packageVersion("lmerTest")
+
 # Perform the ANOVA and normality and variance tests #
 ksp.sha <- aov(Shannon ~ Site*Treatment, ksp.rich) 
 ksp_sha.sum <- summary(ksp.sha)
 ksp_sha.hsd <- TukeyHSD(ksp.sha)
 shapiro.test(residuals(ksp.sha))
 leveneTest(ksp.sha)
+ksp_mix.sha <- lmer(Shannon ~ Treatment + (1 | Site), data = ksp.rich)
+ksp_mix_sha.sum <- summary(ksp_mix.sha)
+ksp_mix_sha.sum
 resave(ksp_sha.sum, file = './abridged.RData')
+resave(ksp_mix_sha.sum, file = './abridged.RData')
 
 # Perform the ANOVA and normality and variance tests #
 ksp.sim <- aov(Simpson ~ Site*Treatment, ksp.rich) 
@@ -491,7 +499,11 @@ ksp_sim.sum <- summary(ksp.sim)
 ksp_sim.hsd <- TukeyHSD(ksp.sim)
 shapiro.test(residuals(ksp.sim))
 leveneTest(ksp.sim)
+ksp_mix.sim <- lmer(Simpson ~ Treatment + (1 | Site), data = ksp.rich)
+ksp_mix_sim.sum <- summary(ksp_mix.sim)
+ksp_mix_sim.sum
 resave(ksp_sim.sum, file = './abridged.RData')
+resave(ksp_mix_sim.sum, file = './abridged.RData')
 
 # Perform the ANOVA and normality and variance tests #
 ksp.cha <- aov(Chao1 ~ Site*Treatment, ksp.rich) 
@@ -499,7 +511,11 @@ ksp_cha.sum <- summary(ksp.cha)
 ksp_cha.hsd <- TukeyHSD(ksp.cha)
 shapiro.test(residuals(ksp.cha))
 leveneTest(ksp.cha)
+ksp_mix.cha <- lmer(Chao1 ~ Treatment + (1 | Site), data = ksp.rich)
+ksp_mix_cha.sum <- summary(ksp_mix.cha)
+ksp_mix_cha.sum
 resave(ksp_cha.sum, file = './abridged.RData')
+resave(ksp_mix_cha.sum, file = './abridged.RData')
 
 # Find the mean and standard deviation of each grouping #
 if(!requireNamespace('ggprism')) install.packages('ggprism')
@@ -853,10 +869,14 @@ alpha.plot <- (cha.plot) /
 resave(alpha.plot, file = "./abridged.RData")
 
 #### Beta Diversity ####
-# For the entire dataset, calculate the weighted unifrac distances from the total sum scaled (TSS) data # 
+# For the entire dataset, calculate the weighted unifrac distances from the total sum scaled (TSS) data #
+nomc.ps <- subset_samples(final_ksp.ps, Treatment != "MycoBloom")
+nomc.ps <- subset_taxa(nomc.ps, taxa_sums(nomc.ps) > 0)
+decompose_ps(nomc.ps, 'nomc')
+
 set.seed(248)
 ksp_prop.ps <- transform_sample_counts(spec_ksp.ps, function(otu) otu/sum(otu))
-ord.nmds.wuni <- ordinate(ksp_prop.ps, method="NMDS", distance="bray")
+ord.nmds.wuni <- ordinate(ksp_prop.ps, method="RDA", distance="bray")
 ksp.bdist <- phyloseq::distance(ksp_prop.ps, method = "bray")
 
 # Perform PermANOVA for the entire dataset
@@ -866,6 +886,8 @@ ksp_by.perm <- adonis2(ksp.bdist~Treatment*Site, data = final_ksp$met, by = "ter
 ksp_by.perm
 ksp.perm <- adonis2(ksp.bdist~Treatment*Site, data = final_ksp$met)
 ksp.perm
+ksp.drda <- dbrda(ksp.bdist ~ Treatment * Site, data = final_ksp$met)
+ksp_drda.sum <- summary(ksp.drda)
 
 resave(ksp_by.perm, file = './abridged.RData')
 resave(ksp.perm, file = './abridged.RData')
@@ -876,6 +898,29 @@ beta.plot<- plot_ordination(ksp_prop.ps, ord.nmds.wuni, shape = "Treatment", col
 
 resave(beta.plot, file = './abridged.RData')
 
+nomc.ps <- subset_samples(spec_ksp.ps, Treatment != "MycoBloom")
+nomc.ps <- subset_taxa(nomc.ps, taxa_sums(nomc.ps) > 0)
+decompose_ps(nomc.ps, 'nomc')
+
+nomc.ps <- subset_samples(final_ksp.ps, Treatment != "MycoBloom")
+nomc.ps <- subset_taxa(nomc.ps, taxa_sums(nomc.ps) > 0)
+decompose_ps(nomc.ps, 'nomc')
+set.seed(248)
+nomc_prop.ps <- transform_sample_counts(nomc.ps, function(otu) otu/sum(otu))
+ord.rda.bray <- ordinate(nomc_prop.ps, method="NMDS", distance="bray")
+nomc.bdist <- phyloseq::distance(nomc_prop.ps, method = "bray")
+
+nomc_by.perm <- adonis2(nomc.bdist~Treatment*Site, data = nomc$met, by = "terms")
+nomc_by.perm
+nomc.perm <- adonis2(nomc.bdist~Treatment*Site, data = nomc$met)
+nomc.perm
+nomc.drda <- dbrda(nomc.bdist ~ Treatment * Site, data = nomc$met)
+nomc_drda.sum <- summary(nomc.drda)
+
+nomc_beta.plot<- plot_ordination(nomc_prop.ps, ord.rda.bray, shape = "Treatment", color="Site", title="dbRDA") +
+  theme_prism() +
+  geom_point(size = 6) 
+
 #### Per Sample Analysis ####
 if(!requireNamespace("devtools")) install.packages('devtools')
 library(devtools); packageVersion('devtools')
@@ -885,7 +930,7 @@ library(pairwiseAdonis); packageVersion("pairwiseAdonis")
 
 ## A ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
-a.ps <- subset_samples(spec_ksp.ps, Site == 'A')
+a.ps <- subset_samples(final_ksp.ps, Site == 'A')
 a.ps <- subset_taxa(a.ps, taxa_sums(a.ps) > 0)
 a.met <- as(sample_data(a.ps), 'data.frame')
 a_prop.ps <- transform_sample_counts(a.ps, function(otu) otu/sum(otu))
@@ -917,11 +962,11 @@ resave(a_sum.man, file = './abridged.RData')
 
 ## B ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
-b.ps <- subset_samples(spec_ksp.ps, Site == 'B')
+b.ps <- subset_samples(final_ksp.ps, Site == 'B')
 b.ps <- subset_taxa(b.ps, taxa_sums(b.ps) > 0)
 b.met <- as(sample_data(b.ps), 'data.frame')
 b_prop.ps <- transform_sample_counts(b.ps, function(otu) otu/sum(otu))
-b_ord.nmds.wuni <- ordinate(b_prop.ps, method="NMDS", distance="bray")
+b_ord.nmds.wuni <- ordinate(b_prop.ps, method="RDA", distance="bray")
 b.bdist <- phyloseq::distance(b.ps, method = "bray")
 
 # Perform PermANOVA #
@@ -1949,5 +1994,23 @@ resave(h.set, file = './abridged.RData')
 tax_check.ps <- subset_taxa(spec_ksp.ps, taxa_names(spec_ksp.ps) %in% taxa_names(myc.ps))
 tax_check.ps <- subset_samples(tax_check.ps, Treatment != 'MycoBloom')
 decompose_ps(tax_check.ps, 'tax_check')
+
+if(!requireNamespace("maaslin3")) BiocManager::install("biobakery/maaslin3")
+library(maaslin3); packageVersion("maaslin3")
+
+if(!dir.exists('./maas')){
+  dir.create('./maas')
+}
+
+spec_ksp$met$Treats <- factor(spec_ksp$met$Treatment, levels = c("Control", "Low", "High"))
+
+spec_ksp.maas <- maaslin3(input_data = spec_ksp$otu,
+                           input_metadata = spec_ksp$met,
+                           output = './maas/spec_ksp.maas',
+                           formula = '~ Treats + (1 | Site)',
+                           normalization = "TSS",
+                           transform = "LOG",
+                           correction = "BH")
+
 
 save.image("./ksp_amf.RData")
