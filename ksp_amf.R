@@ -16,7 +16,7 @@ setwd("~/ksp_amf")
 if (!requireNamespace("optparse", quietly = TRUE)) install.packages("optparse")
 library(optparse); packageVersion("optparse")
 
-# A special list of all the parsable objects is made #
+# A finalial list of all the parsable objects is made #
 option_list <- list(
   make_option("--forward", type = "character", help = "filepath containing the raw, untrimmed reads"))
 
@@ -204,7 +204,7 @@ resave(final.track, file = 'abridged.RData')
 
 #### Assigning Taxonomy ####
 # To assign taxonomy, we use the MaarJAM database as a reference that has been adapted to be read by dada2 #
-ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", minBoot = 90, multithread = TRUE, verbose = TRUE)
+ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", minBoot = 0, outputBootstraps = TRUE, multithread = TRUE, verbose = TRUE)
 ksp.taxa <- as.data.frame(ksp.taxa)
 colnames(ksp.taxa) <- c('Family', "Genus", 'Species')
 
@@ -405,57 +405,12 @@ for(i in LETTERS[1:8]){
 final_ksp.ps <- subset_samples(fun_ksp.ps, !sample_names(fun_ksp.ps) %in% rownames(remn.met))
 final_ksp.ps <- subset_taxa(final_ksp.ps, taxa_sums(final_ksp.ps) > 0)
 
-# Rename taxa so they correspond to their new ordering based on abundance; also, make a new column for each lowest classification #
-taxa_names(final_ksp.ps) <- paste0("ASV", seq(ntaxa(final_ksp.ps)))
-final_ksp.tax <- as.data.frame(tax_table(final_ksp.ps))
-for(i in 1:nrow(final_ksp.tax)){
-  if(!is.na(final_ksp.tax$Species[i])){
-    if(final_ksp.tax$Species[i] != "sp.") {
-      taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Species[i], ')')
-      final_ksp.tax$Final[i] <- final_ksp.tax$Species[i]}
-    else{taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Genus[i], ')') 
-    final_ksp.tax$Final[i] <- final_ksp.tax$Genus[i]}
-  } else if(!is.na(final_ksp.tax$Genus[i])){
-    taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Genus[i], ')')
-    final_ksp.tax$Final[i] <- final_ksp.tax$Genus[i]
-  } else if(!is.na(final_ksp.tax$Family[i])){
-    taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Family[i], ')')
-    final_ksp.tax$Final[i] <- final_ksp.tax$Family[i]
-  }
-}
 # Remake the taxa table to only include MaarJAM databse hits #
 rownames(final_ksp.tax) <- taxa_names(final_ksp.ps)
-tax_table(final_ksp.ps) <- as.matrix(final_ksp.tax)[,c("Family", "Genus", "Species", "Final", "ASV")]
-
-# Aggregate all taxa to the level of "Final" (what is found in the parentheses of the taxa names) #
-if(!requireNamespace("microbiome")) BiocManager::install("microbiome")
-library(microbiome); packageVersion("microbiome")
-spec_ksp.ps <- aggregate_taxa(final_ksp.ps, level = "Final")
-spec_ksp.ps <- subset_taxa(spec_ksp.ps, taxa_sums(spec_ksp.ps) > 0)
-
-# Resave the phyloseq in order of abundance #
-decompose_ps(spec_ksp.ps, 'spec_ksp')
-spec_ksp$otu <- arrange(spec_ksp$otu, desc(rowSums(spec_ksp$otu)))
-spec_ksp$tax <- spec_ksp$tax[rownames(spec_ksp$otu),] 
-
-spec_ksp.ps <- phyloseq(otu_table(spec_ksp$otu, taxa_are_rows = TRUE),
-                        tax_table(as.matrix(spec_ksp$tax)),
-                        sample_data(spec_ksp$met))
-
-# Rename the taxa in order of abundance #
-for(i in 1:ntaxa(spec_ksp.ps)){
-  taxa_names(spec_ksp.ps)[i] <- paste0('ASV', i, '(', tax_table(spec_ksp.ps)[i, 4], ')')}
-
-# Save the column "ASV" in the taxa table to correspond to the taxa_names #
-for(i in 1:ntaxa(spec_ksp.ps)){
-  tax_table(spec_ksp.ps)[i,"ASV"] <- taxa_names(spec_ksp.ps)[i] 
-}
-
-# Decompose the final phyloseq object (spec_ksp.ps) #
-decompose_ps(spec_ksp.ps, 'spec_ksp')
+tax_table(final_ksp.ps) <- as.matrix(final_ksp.tax)[,c("Family", "Genus", "Species", "ASV")]
 
 # Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
-myc.ps <- subset_samples(spec_ksp.ps, Treatment == "MycoBloom")
+myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
 myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 decompose_ps(myc.ps, 'myc')
 myc$fra <- arrange(myc$fra, desc(myc$fra$MycoBloom1))
@@ -463,11 +418,11 @@ myc$fra <- arrange(myc$fra, desc(myc$fra$MycoBloom1))
 # Save the final and mycbloom phyloseq and decomposed phyloseq objects to abridged.RData #
 resave(myc.ps, file = './abridged.RData')
 resave(myc, file = './abridged.RData')
-resave(spec_ksp.ps, file = './abridged.RData')
-resave(spec_ksp, file = './abridged.RData')
+resave(final_ksp.ps, file = './abridged.RData')
+resave(final_ksp, file = './abridged.RData')
 
 #### Alpha Diversity Measurement and Visualization ####
-ksp.rich <- estimate_richness(spec_ksp.ps) # automatically performs alpha diversity calculations #
+ksp.rich <- estimate_richness(final_ksp.ps) # automatically performs alpha diversity calculations #
 ksp.rich <- cbind(final_ksp$met, ksp.rich)
 myc.rich <- filter(ksp.rich, Treatment == "MycoBloom")
 ksp.rich <- filter(ksp.rich, Treatment != "MycoBloom")
@@ -875,7 +830,7 @@ nomc.ps <- subset_taxa(nomc.ps, taxa_sums(nomc.ps) > 0)
 decompose_ps(nomc.ps, 'nomc')
 
 set.seed(248)
-ksp_prop.ps <- transform_sample_counts(spec_ksp.ps, function(otu) otu/sum(otu))
+ksp_prop.ps <- transform_sample_counts(final_ksp.ps, function(otu) otu/sum(otu))
 ord.nmds.wuni <- ordinate(ksp_prop.ps, method="RDA", distance="bray")
 ksp.bdist <- phyloseq::distance(ksp_prop.ps, method = "bray")
 
@@ -898,7 +853,7 @@ beta.plot<- plot_ordination(ksp_prop.ps, ord.nmds.wuni, shape = "Treatment", col
 
 resave(beta.plot, file = './abridged.RData')
 
-nomc.ps <- subset_samples(spec_ksp.ps, Treatment != "MycoBloom")
+nomc.ps <- subset_samples(final_ksp.ps, Treatment != "MycoBloom")
 nomc.ps <- subset_taxa(nomc.ps, taxa_sums(nomc.ps) > 0)
 decompose_ps(nomc.ps, 'nomc')
 
@@ -993,7 +948,7 @@ resave(b_man.sum, file = 'abridged.RData')
 
 ## C ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
-c.ps <- subset_samples(spec_ksp.ps, Site == 'C')
+c.ps <- subset_samples(final_ksp.ps, Site == 'C')
 c.ps <- subset_taxa(c.ps, taxa_sums(c.ps) > 0)
 c.met <- as(sample_data(c.ps), 'data.frame')
 c_prop.ps <- transform_sample_counts(c.ps, function(otu) otu/sum(otu))
@@ -1025,7 +980,7 @@ resave(c_man.sum, file = './abridged.RData')
 
 ## D ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
-d.ps <- subset_samples(spec_ksp.ps, Site == 'D')
+d.ps <- subset_samples(final_ksp.ps, Site == 'D')
 d.ps <- subset_taxa(d.ps, taxa_sums(d.ps) > 0)
 d.met <- as(sample_data(d.ps), 'data.frame')
 d_prop.ps <- transform_sample_counts(d.ps, function(otu) otu/sum(otu))
@@ -1056,7 +1011,7 @@ resave(d_man.sum, file = './abridged.RData')
 
 ## E ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
-e.ps <- subset_samples(spec_ksp.ps, Site == 'E')
+e.ps <- subset_samples(final_ksp.ps, Site == 'E')
 e.ps <- subset_taxa(e.ps, taxa_sums(e.ps) > 0)
 e.met <- as(sample_data(e.ps), 'data.frame')
 e_prop.ps <- transform_sample_counts(e.ps, function(otu) otu/sum(otu))
@@ -1088,7 +1043,7 @@ resave(e_man.sum, file = 'abridged.RData')
 
 ## F ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
-f.ps <- subset_samples(spec_ksp.ps, Site == 'F')
+f.ps <- subset_samples(final_ksp.ps, Site == 'F')
 f.ps <- subset_taxa(f.ps, taxa_sums(f.ps) > 0)
 f.met <- as(sample_data(f.ps), 'data.frame')
 f_prop.ps <- transform_sample_counts(f.ps, function(otu) otu/sum(otu))
@@ -1119,7 +1074,7 @@ resave(f_man.sum, file = './abridged.RData')
 
 ## G ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
-g.ps <- subset_samples(spec_ksp.ps, Site == 'G')
+g.ps <- subset_samples(final_ksp.ps, Site == 'G')
 g.ps <- subset_taxa(g.ps, taxa_sums(g.ps) > 0)
 g.met <- as(sample_data(g.ps), 'data.frame')
 g_prop.ps <- transform_sample_counts(g.ps, function(otu) otu/sum(otu))
@@ -1150,7 +1105,7 @@ resave(g.man.sum, file = './abridged.RData')
 
 ## H ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
-h.ps <- subset_samples(spec_ksp.ps, Site == 'H')
+h.ps <- subset_samples(final_ksp.ps, Site == 'H')
 h.ps <- subset_taxa(h.ps, taxa_sums(h.ps) > 0)
 h.met <- as(sample_data(h.ps), 'data.frame')
 h_prop.ps <- transform_sample_counts(h.ps, function(otu) otu/sum(otu))
@@ -1184,22 +1139,22 @@ resave(h_man.sum, file = './abridged.RData')
 # First we start by making a color pallette for each unique ASV #
 if(!requireNamespace("Polychrome")) install.packages("Polychrome")
 library(Polychrome); packageVersion("Polychrome")
-ksp.colr <- createPalette(ntaxa(spec_ksp.ps),  c("#ff0000", "#00ff00", "#0000ff"))
+ksp.colr <- createPalette(ntaxa(final_ksp.ps),  c("#ff0000", "#00ff00", "#0000ff"))
 ksp.colr <- as.data.frame(ksp.colr)
-rownames(ksp.colr) <- taxa_names(spec_ksp.ps)
+rownames(ksp.colr) <- taxa_names(final_ksp.ps)
 
 # Add a gray color for "Other"
 ksp.colr[152,] <- "#D4D4D4" 
 rownames(ksp.colr)[152] <- "Other" 
 
 # Save 'ASV' as it's own unique level of taxonomy #
-spec.tax <- as.data.frame(tax_table(spec_ksp.ps))
-spec.tax$ASV <- taxa_names(spec_ksp.ps)
-tax_table(spec_ksp.ps) <- as.matrix(spec.tax)
+final.tax <- as.data.frame(tax_table(final_ksp.ps))
+final.tax$ASV <- taxa_names(final_ksp.ps)
+tax_table(final_ksp.ps) <- as.matrix(final.tax)
 
 ## MycoBloom Sample ##
 # Save a phyloseq Object that contains only the samples of interest #
-myc.ps <- subset_samples(spec_ksp.ps, Treatment == "MycoBloom")
+myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
 myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1239,7 +1194,7 @@ resave(hg_myc.plot, file = './abridged.RData')
 
 ## Site A Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_a.ps <- subset_samples(spec_ksp.ps, Site == "A" | Treatment == "MycoBloom")
+hg_a.ps <- subset_samples(final_ksp.ps, Site == "A" | Treatment == "MycoBloom")
 hg_a.ps <- subset_taxa(hg_a.ps, taxa_sums(hg_a.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1280,7 +1235,7 @@ resave(hg_a.plot, file = './abridged.RData')
 
 ## Site B Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_b.ps <- subset_samples(spec_ksp.ps, Site == "B" | Treatment == "MycoBloom")
+hg_b.ps <- subset_samples(final_ksp.ps, Site == "B" | Treatment == "MycoBloom")
 hg_b.ps <- subset_taxa(hg_b.ps, taxa_sums(hg_b.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1320,7 +1275,7 @@ resave(hg_b.plot, file = './abridged.RData')
 
 ## Site C Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_c.ps <- subset_samples(spec_ksp.ps, Site == "C" | Treatment == "MycoBloom")
+hg_c.ps <- subset_samples(final_ksp.ps, Site == "C" | Treatment == "MycoBloom")
 hg_c.ps <- subset_taxa(hg_c.ps, taxa_sums(hg_c.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1360,7 +1315,7 @@ resave(hg_c.plot, file = './abridged.RData')
 
 ## Site D Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_d.ps <- subset_samples(spec_ksp.ps, Site == "D" | Treatment == "MycoBloom")
+hg_d.ps <- subset_samples(final_ksp.ps, Site == "D" | Treatment == "MycoBloom")
 hg_d.ps <- subset_taxa(hg_d.ps, taxa_sums(hg_d.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1400,7 +1355,7 @@ resave(hg_d.plot, file = './abridged.RData')
 
 ## Site E Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_e.ps <- subset_samples(spec_ksp.ps, Site == "E" | Treatment == "MycoBloom")
+hg_e.ps <- subset_samples(final_ksp.ps, Site == "E" | Treatment == "MycoBloom")
 hg_e.ps <- subset_taxa(hg_e.ps, taxa_sums(hg_e.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1440,7 +1395,7 @@ resave(hg_e.plot, file = './abridged.RData')
 
 ## Site F Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_f.ps <- subset_samples(spec_ksp.ps, Site == "F" | Treatment == "MycoBloom")
+hg_f.ps <- subset_samples(final_ksp.ps, Site == "F" | Treatment == "MycoBloom")
 hg_f.ps <- subset_taxa(hg_f.ps, taxa_sums(hg_f.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1480,7 +1435,7 @@ resave(hg_f.plot, file = './abridged.RData')
 
 ## Site G Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_g.ps <- subset_samples(spec_ksp.ps, Site == "G" | Treatment == "MycoBloom")
+hg_g.ps <- subset_samples(final_ksp.ps, Site == "G" | Treatment == "MycoBloom")
 hg_g.ps <- subset_taxa(hg_g.ps, taxa_sums(hg_g.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1520,7 +1475,7 @@ resave(hg_g.plot, file = './abridged.RData')
 
 ## Site H Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_h.ps <- subset_samples(spec_ksp.ps, Site == "H" | Treatment == "MycoBloom")
+hg_h.ps <- subset_samples(final_ksp.ps, Site == "H" | Treatment == "MycoBloom")
 hg_h.ps <- subset_taxa(hg_h.ps, taxa_sums(hg_h.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
@@ -1562,7 +1517,7 @@ resave(hg_h.plot, file = './abridged.RData')
 hg_ksp.colr <- ksp.colr[hg_myc.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
-hg_ksp.ps <- merge_taxa(spec_ksp.ps, taxa_names(spec_ksp.ps)[!taxa_names(spec_ksp.ps) %in% hg_myc.name])
+hg_ksp.ps <- merge_taxa(final_ksp.ps, taxa_names(final_ksp.ps)[!taxa_names(final_ksp.ps) %in% hg_myc.name])
 taxa_names(hg_ksp.ps)[2] <- "Other"
 tax_table(hg_ksp.ps)[2, "ASV"] <- "Other"
 
@@ -1596,17 +1551,17 @@ resave(hg_ksp.plot, file = './abridged.RData')
 myc.name <- taxa_names(myc.ps)
 
 # Subset the whole phyloseq object by treatments and filter to only contain taxa found in the MycoBloom #
-con.ps <- subset_samples(spec_ksp.ps, Treatment == "Control")
+con.ps <- subset_samples(final_ksp.ps, Treatment == "Control")
 con.ps <- subset_taxa(con.ps, taxa_names(con.ps) %in% myc.name)
 con.ps <- subset_taxa(con.ps, taxa_sums(con.ps) > 0)
 con.name <- taxa_names(con.ps)
 
-hig.ps <- subset_samples(spec_ksp.ps, Treatment == "High")
+hig.ps <- subset_samples(final_ksp.ps, Treatment == "High")
 hig.ps <- subset_taxa(hig.ps, taxa_names(hig.ps) %in% myc.name)
 hig.ps <- subset_taxa(hig.ps, taxa_sums(hig.ps) > 0)
 hig.name <- taxa_names(hig.ps)
 
-low.ps <- subset_samples(spec_ksp.ps, Treatment == "Low")
+low.ps <- subset_samples(final_ksp.ps, Treatment == "Low")
 low.ps <- subset_taxa(low.ps, taxa_names(low.ps) %in% myc.name)
 low.ps <- subset_taxa(low.ps, taxa_sums(low.ps) > 0)
 low.name <- taxa_names(low.ps)
@@ -1991,7 +1946,7 @@ h.set <- upset(
   )
 resave(h.set, file = './abridged.RData')
 
-tax_check.ps <- subset_taxa(spec_ksp.ps, taxa_names(spec_ksp.ps) %in% taxa_names(myc.ps))
+tax_check.ps <- subset_taxa(final_ksp.ps, taxa_names(final_ksp.ps) %in% taxa_names(myc.ps))
 tax_check.ps <- subset_samples(tax_check.ps, Treatment != 'MycoBloom')
 decompose_ps(tax_check.ps, 'tax_check')
 
@@ -2002,11 +1957,11 @@ if(!dir.exists('./maas')){
   dir.create('./maas')
 }
 
-spec_ksp$met$Treats <- factor(spec_ksp$met$Treatment, levels = c("Control", "Low", "High"))
+final_ksp$met$Treats <- factor(final_ksp$met$Treatment, levels = c("Control", "Low", "High"))
 
-spec_ksp.maas <- maaslin3(input_data = spec_ksp$otu,
-                           input_metadata = spec_ksp$met,
-                           output = './maas/spec_ksp.maas',
+final_ksp.maas <- maaslin3(input_data = final_ksp$otu,
+                           input_metadata = final_ksp$met,
+                           output = './maas/final_ksp.maas',
                            formula = '~ Treats + (1 | Site)',
                            normalization = "TSS",
                            transform = "LOG",
