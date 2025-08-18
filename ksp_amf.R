@@ -209,7 +209,7 @@ resave(final.track, file = 'abridged.RData')
 # To assign taxonomy, we use the MaarJAM database as a reference that has been adapted to be read by dada2 #
 ksp.taxa <- assignTaxonomy(nochim_ksp.st, "./reference/maarjam_dada2.fasta", minBoot = 0, outputBootstraps = TRUE, multithread = TRUE, verbose = TRUE)
 ksp.taxa <- as.data.frame(ksp.taxa)
-colnames(ksp.taxa) <- c('Family', "Genus", 'Species')
+colnames(ksp.taxa) <- c('Family', "Genus", 'Species', 'Family_Boot', 'Genus_Boot', 'Species_Boot')
 
 # Finally, we can change the format of our ASV table ("nochim_ksp.st") and taxonomy tables ("ksp.taxa") into more convenient formats #
 ksp.taxa <- as.matrix(ksp.taxa)
@@ -235,9 +235,6 @@ nochim_ksp.st <- t(nochim_ksp.st)
 raw_ksp.ps <- phyloseq(otu_table(nochim_ksp.st, taxa_are_rows = TRUE),
                        tax_table(ksp.taxa),
                        sample_data(ksp.met))
-
-# Filter out samples that did not have any matches to the MaarJAM database #
-raw_ksp.ps <- subset_taxa(raw_ksp.ps, !is.na(Family))
 
 # We can save the DNA sequences of each ASV as they are saved as the row names of the ASV and taxonomy tables and then change the taxa names to "ASVn", #
 # where n is the number ASV the sequence corresponds to, which is ranked by total abundance across all samples #
@@ -408,9 +405,28 @@ for(i in LETTERS[1:8]){
 final_ksp.ps <- subset_samples(fun_ksp.ps, !sample_names(fun_ksp.ps) %in% rownames(remn.met))
 final_ksp.ps <- subset_taxa(final_ksp.ps, taxa_sums(final_ksp.ps) > 0)
 
+# Assign final taxonomy based on Bootstrap Values #
+taxa_names(final_ksp.ps) <- paste0('ASV', seq(ntaxa(final_ksp.ps)))
+final_ksp.tax <- as.data.frame(tax_table(final_ksp.ps))
+for(i in 4:6){
+  final_ksp.tax[,i] <- as.numeric(final_ksp.tax[,i])
+}
+for(i in 1:nrow(final_ksp.tax)){
+  if(final_ksp.tax$Species_Boot[i] > 50){
+    taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Species[i], ')')
+  } else if(final_ksp.tax$Genus_Boot[i] > 50){
+    taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Genus[i], ')')
+  } else if(final_ksp.tax$Family_Boot[i] > 50){
+    taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(', final_ksp.tax$Family[i], ')')
+    } else{
+      taxa_names(final_ksp.ps)[i] <- paste0(taxa_names(final_ksp.ps)[i], '(NA)')
+  }
+}
+
 # Remake the taxa table to only include MaarJAM databse hits #
 rownames(final_ksp.tax) <- taxa_names(final_ksp.ps)
-tax_table(final_ksp.ps) <- as.matrix(final_ksp.tax)[,c("Family", "Genus", "Species", "ASV")]
+final_ksp.tax$ASV <- rownames(final_ksp.tax)
+tax_table(final_ksp.ps) <- as.matrix(final_ksp.tax)[,c("Family", "Genus", "Species", "ASV", "Family_Boot", "Genus_Boot", "Species_Boot")]
 
 # Since we are interested in seeing if the inoculant communities makes it into the incumbent community, we can make a separate phyloseq object that just has the MycoBloom Community #
 myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
