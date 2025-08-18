@@ -433,6 +433,7 @@ myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
 myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 decompose_ps(myc.ps, 'myc')
 myc$fra <- arrange(myc$fra, desc(myc$fra$MycoBloom1))
+decompose_ps(final_ksp.ps, 'final_ksp')
 
 # Save the final and mycbloom phyloseq and decomposed phyloseq objects to abridged.RData #
 resave(myc.ps, file = './abridged.RData')
