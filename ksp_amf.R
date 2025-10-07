@@ -450,6 +450,7 @@ final_ksp.tax <- as.data.frame(tax_table(final_ksp.ps))
 for(i in 4:6){
   final_ksp.tax[,i] <- as.numeric(final_ksp.tax[,i])
 }
+
 # Remove taxa that have bootstrap values below 50 #
 ksp.rem <- filter(final_ksp.tax, Family_Boot < 50)
 final_ksp.ps <- subset_taxa(final_ksp.ps, !taxa_names(final_ksp.ps) %in% rownames(ksp.rem))
@@ -471,6 +472,37 @@ for(i in 1:nrow(final_ksp.tax)){
 rownames(final_ksp.tax) <- taxa_names(final_ksp.ps)
 final_ksp.tax$ASV <- rownames(final_ksp.tax)
 tax_table(final_ksp.ps) <- as.matrix(final_ksp.tax)[,c("Family", "Genus", "Species", "ASV", "Family_Boot", "Genus_Boot", "Species_Boot")]
+
+# As a final taxa limiting step, join taxa that are 95% related (According to the phylogentic distances between ASVs) # 
+final_ksp.ps <- tip_glom(final_ksp.ps, h = 0.05)
+
+# Fix the taxonomy table using the original tax table #
+decompose_ps(final_ksp.ps, 'final_ksp')
+fin_ksp.tax <- c()
+for(i in rownames(final_ksp.tax)){
+  if(i %in% taxa_names(final_ksp.ps)){
+    fin_ksp.tax <- rbind(fin_ksp.tax, final_ksp.tax[i,c("Family", "Genus", "Species", "ASV")])
+  }
+}
+tax_table(final_ksp.ps) <- as.matrix(fin_ksp.tax)
+
+# Fix the ASVs such that they are numbered in order of abundance #
+fix_tax_names <- function(ps, label){
+  # function that fixes the names of taxa such that they represent their order of abundance #
+  tax.list <- names(sort(taxa_sums(ps), decreasing = TRUE))
+  tax.df <- as.data.frame(tax_table(ps))
+  new_tax.df <- tax.df[tax.list,]
+  for(i in 1:nrow(new_tax.df)){
+    new_tax.df$Abundance_Rank[i] <- i
+    new_tax.df$Lowest[i] <- sub(".*\\((.*)\\)", "\\1", new_tax.df$ASV[i])
+    new_tax.df$ASV[i] <- paste0('ASV', as.character(new_tax.df$Abundance_Rank[i]), '(', new_tax.df$Lowest[i], ')')}
+  new_tax.df <- new_tax.df[taxa_names(ps),]
+  tax_table(ps) <- as.matrix(new_tax.df)
+  taxa_names(ps) <- new_tax.df$ASV
+  assign(label, ps, envir = .GlobalEnv)
+}
+
+fix_tax_names(final_ksp.ps, 'final_ksp.ps')
 
 # Save Treatment and Site as factors in the metadata table, as well as their pairwise combinations #
 sample_data(final_ksp.ps)$Treats <- factor(sample_data(final_ksp.ps)$Treatment, levels = c("Control", "Low", "High", "MycoBloom"))
@@ -518,15 +550,6 @@ resave(ksp.rich, file = './abridged.RData')
 if(!requireNamespace("car")) install.packages("car")
 library(car); packageVersion("car")
 
-if(!requireNamespace("lmerTest")) install.packages("lmerTest")
-library(lmerTest); packageVersion("lmerTest")
-
-if(!requireNamespace("emmeans")) install.packages("emmeans")
-library(emmeans); packageVersion("emmeans")
-
-if(!requireNamespace("performance")) install.packages("performance")
-library(performance); packageVersion("performance")
-
 ## Shannon Diversity ##
 # Perform the ANOVA and normality and variance tests for a multiple linear regression #
 ksp_sha.fit <- lm(Shannon ~ Treatment * Site, data = ksp.rich)
@@ -534,23 +557,8 @@ ksp_sha.sum <- Anova(ksp_sha.fit, type = 3)
 ksp_sha.sum
 shapiro.test(residuals(ksp_sha.fit))
 leveneTest(ksp_sha.fit)
-
-# Perform ANOVA and diagnostics for the mixed linear model #
-ksp_mix.sha <- lmer(Shannon ~ Treats + (1 | Sites), data = ksp.rich)
-ksp_mix_sha.dia <- check_model(ksp_mix.sha, panel = TRUE)
-ksp_mix_sha.dia
-shapiro.test(resid(ksp_mix.sha))
-leveneTest(resid(ksp_mix.sha) ~ ksp.rich$Treats)
-ksp_mix_sha.sum <- summary(ksp_mix.sha)
-ksp_mix_sha.sum
-ksp_mix_sha.aov <- Anova(ksp_mix.sha, type = 3)
-ksp_mix_sha.aov
-ksp_sha.emn <- emmeans(ksp_mix.sha,pairwise~ Treats, adjust = "none")
-ksp_sha.emn
+AIC(ksp_sha.fit)
 resave(ksp_sha.sum, file = './abridged.RData')
-resave(ksp_mix_sha.sum, file = './abridged.RData')
-resave(ksp_mix_sha.aov, file = 'abridged.RData')
-resave(ksp_sha.emn, file = './abridged.RData')
 
 ## Shannon Evenness ##
 # Perform the ANOVA and normality and variance tests #
@@ -559,22 +567,7 @@ ksp_sev.sum <- Anova(ksp_sev.fit, type = 3)
 ksp_sev.sum
 shapiro.test(residuals(ksp_sev.fit))
 leveneTest(ksp_sev.fit)
-
-# Perform ANOVA and diagnostics for the mixed linear model #
-ksp_mix.sev <- lmer(ShaEvn ~ Treats + (1 | Sites), data = ksp.rich)
-ksp_mix_sev.dia <- check_model(ksp_mix.sev, panel = TRUE)
-ksp_mix_sev.dia
-shapiro.test(resid(ksp_mix.sev))
-leveneTest(resid(ksp_mix.sev) ~ ksp.rich$Treatment)
-ksp_mix_sev.sum <- summary(ksp_mix.sev)
-ksp_mix_sev.sum
-ksp_mix_sev.aov <- Anova(ksp_mix.sev, type = 3)
-ksp_mix_sev.aov
-ksp_sev.emn <- emmeans(ksp_mix.sev,pairwise~ Treats, adjust = "none")
-ksp_sev.emn
-resave(ksp_sev.sum, file = './abridged.RData')
-resave(ksp_mix_sev.sum, file = './abridged.RData')
-resave(ksp_mix_sev.aov, file = 'abridged.RData')
+AIC(ksp_sev.fit)
 resave(ksp_sev.emn, file = './abridged.RData')
 
 
@@ -584,21 +577,7 @@ ksp_cha.sum <- Anova(ksp_cha.fit, type = 3)
 ksp_cha.sum
 shapiro.test(residuals(ksp_cha.fit))
 leveneTest(ksp_cha.fit)
-
-# Perform ANOVA and diagnostics for the mixed linear model #
-ksp_mix.cha <- lmer(Chao1 ~ Treats + (1 | Sites), data = ksp.rich)
-ksp_mix_cha.dia <- check_model(ksp_mix.cha, panel = TRUE)
-shapiro.test(resid(ksp_mix.cha))
-leveneTest(resid(ksp_mix.cha) ~ ksp.rich$Treatment)
-ksp_mix_cha.sum <- summary(ksp_mix.cha)
-ksp_mix_cha.sum
-ksp_mix_cha.aov <- Anova(ksp_mix.cha, type = 3)
-ksp_mix_cha.aov
-ksp_cha.emn <- emmeans(ksp_mix.cha,pairwise~ Treats, adjust = "none")
-ksp_cha.emn
-resave(ksp_cha.sum, file = './abridged.RData')
-resave(ksp_mix_cha.sum, file = './abridged.RData')
-resave(ksp_mix_cha.aov, file = 'abridged.RData')
+AIC(ksp_cha.fit)
 resave(ksp_cha.emn, file = './abridged.RData')
 
 # Find the mean and standard deviation of each grouping #
@@ -847,7 +826,7 @@ evn.plot <- ggplot(plot.rich, aes(x = Sites, y = evn.mean, fill = Treats, color 
   scale_fill_manual(values = c("white", "gray", "#4D4D4D", 'black'), name = 'Inoculant Level') +
   scale_color_manual(values = c('black', 'black', 'black'), name = 'Inoculant Level') +
   scale_y_continuous(limits = c(0,1.1), breaks = seq(0,1,0.2),expand = expansion(mult = c(0, 0.05))) +
-  geom_text(aes(label = sim.let, y = evn.mean + evn.sd + 0.01), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
+  geom_text(aes(label = sim.let, y = evn.mean + evn.sd + 0.025), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
   geom_errorbar(aes(ymin = evn.mean - evn.sd, ymax = evn.mean + evn.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2) +
   theme(legend.title = element_text(size = 20, family = "Liberation Sans", face = 'bold'),
         legend.text = element_text(size = 16, family = "Liberation Sans", face = 'bold'),
@@ -957,8 +936,8 @@ cha.plot <- ggplot(plot.rich, aes(x = Sites, y = cha.mean, fill = Treats, color 
   ylab("ASV Richness") +
   scale_fill_manual(values = c("white", "gray", "#4D4D4D", 'black'), name = "Inoculant Level") +
   scale_color_manual(values = c('black', 'black', 'black'), name = "Inoculant Level") +
-  scale_y_continuous(limits = c(0,220), breaks = seq(0, 200, 40), expand = expansion(mult = c(0,0.05))) +
-  geom_text(aes(label = cha.let, y = cha.mean + cha.sd + 1), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
+  scale_y_continuous(limits = c(0,160), breaks = seq(0, 150, 30), expand = expansion(mult = c(0,0.05))) +
+  geom_text(aes(label = cha.let, y = cha.mean + cha.sd + 5), show.legend = FALSE, position = position_dodge(width = 0.7), vjust = 0, size = 8) +
   geom_errorbar(aes(ymin = cha.mean - cha.sd, ymax = cha.mean + cha.sd), show.legend = FALSE, position = position_dodge(width = 0.7), width = 0.2) +
   theme(legend.title = element_text(size = 20, family = "Liberation Sans", face = 'bold'),
         legend.text = element_text(size = 16, family = "Liberation Sans", face = 'bold'),
@@ -984,6 +963,45 @@ alpha.plot <- (cha.plot) /
 resave(alpha.plot, file = "./abridged.RData")
 
 #### Beta Diversity ####
+### Make an upset plot to determine whether to use weighted or unweighted unifrac ###
+if(!requireNamespace("ComplexUpset")) install.packages("ComplexUpset")
+library(ComplexUpset); packageVersion("ComplexUpset")
+
+## Subset the whole phyloseq object by treatments and filter to only contain taxa found in the MycoBloom ##
+# Control #
+con.ps <- subset_samples(final_ksp.ps, Treatment == "Control")
+con.ps <- subset_taxa(con.ps, taxa_sums(con.ps) > 0)
+con.name <- taxa_names(con.ps)
+
+# High #
+hig.ps <- subset_samples(final_ksp.ps, Treatment == "High")
+hig.ps <- subset_taxa(hig.ps, taxa_sums(hig.ps) > 0)
+hig.name <- taxa_names(hig.ps)
+
+# Low #
+low.ps <- subset_samples(final_ksp.ps, Treatment == "Low")
+low.ps <- subset_taxa(low.ps, taxa_sums(low.ps) > 0)
+low.name <- taxa_names(low.ps)
+
+
+all.usdf <- list(Control = con.name, High = hig.name, Low = low.name)
+all.asv <- data.frame(ASV = taxa_names(final_ksp.ps))
+for (group in names(all.usdf)) {
+  all.asv[[group]] <- all.asv$ASV %in% all.usdf[[group]]
+}
+
+for(i in 2:4){
+  for(j in 1:nrow(all.asv)){
+    all.asv[j,i] <- as.integer(all.asv[j,i])
+  }
+}
+
+if(!requireNamespace('UpSetR')) install.packages('UpSetR')
+library(UpSetR); packageVersion('UpSetR')
+
+upset(all.asv, order.by = 'freq')
+resave(all.set, file = './abridged.RData')
+
 # For the entire dataset, calculate the weighted unifrac distances from the total sum scaled (TSS) data #
 if(!requireNamespace("vegan")) install.package("vegan")
 library(vegan); packageVersion('vegan')
@@ -1004,26 +1022,19 @@ ksp_by.perm <- adonis2(ksp.bdist~Treats*Sites, data = final_ksp$met, by = "terms
 ksp_by.perm
 ksp.perm <- adonis2(ksp.bdist~Treats*Sites, data = final_ksp$met)
 ksp.perm
-ksp.drda <- dbrda(ksp.bdist ~ Treats * Sites, data = final_ksp$met)
-ksp_drda.sum <- summary(ksp.drda)
-ksp_drda.sum
 
 resave(ksp_by.perm, file = './abridged.RData')
 resave(ksp.perm, file = './abridged.RData')
 
-beta.plot<- plot_ordination(ksp_prop.ps, ord.nmds.wuni, shape = "Treatment", color="Site", title="NMDS") +
+beta.plot<- plot_ordination(ksp_prop.ps, ord.nmds.wuni, shape = "Treats", color="Site", title="All Samples") +
   theme_prism() +
-  geom_point(size = 6) 
+  geom_point(size = 6)
+  
+TukeyHSD(betadisper(ksp.bdist, group = final_ksp$met$Treats, type = 'median'))
 
 resave(beta.plot, file = './abridged.RData')
 
 #### Per Sample Analysis ####
-if(!requireNamespace("devtools")) install.packages('devtools')
-library(devtools); packageVersion('devtools')
-
-if(!requireNamespace("pairwiseAdonis")) devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
-library(pairwiseAdonis); packageVersion("pairwiseAdonis")
-
 ## A ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
 a.ps <- subset_samples(final_ksp.ps, Site == 'A')
@@ -1034,7 +1045,7 @@ a.dist <- as.dist(as.matrix(ksp.bdist)[sample_names(a.ps), sample_names(a.ps)])
 a_ord.nmds.wuni <- ordinate(a_prop.ps, method="NMDS", distance= a.dist)
 
 # Perform PermANOVA #
-a.perm <- adonis2(a.bdist~Treatment, data = a.met)
+a.perm <- adonis2(a.dist~Treatment, data = a.met)
 a.perm
 resave(a.perm, file = 'abridged.RData')
 
@@ -1042,6 +1053,8 @@ resave(a.perm, file = 'abridged.RData')
 a_beta.plot <- plot_ordination(a_prop.ps, a_ord.nmds.wuni, color="Treatment", title="A Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
+
+TukeyHSD(betadisper(a.dist, group = sample_data(a.ps)$Treats, type = 'median'))
 
 resave(a_beta.plot, file = 'abridged.RData')
 
@@ -1055,7 +1068,7 @@ b.dist <- as.dist(as.matrix(ksp.bdist)[sample_names(b.ps), sample_names(b.ps)])
 b_ord.nmds.wuni <- ordinate(b_prop.ps, method="NMDS", distance=b.dist)
 
 # Perform PermANOVA #
-b.perm <- adonis2(b.bdist~Treatment, data = b.met)
+b.perm <- adonis2(b.dist~Treatment, data = b.met)
 b.perm
 resave(b.perm, file = './abridged.RData')
 
@@ -1064,6 +1077,8 @@ b_beta.plot <- plot_ordination(b_prop.ps, b_ord.nmds.wuni, color="Treatment", ti
   theme_prism() +
   geom_point(size = 6)
 resave(b_beta.plot, file = './abridged.RData')
+
+TukeyHSD(betadisper(b.dist, group = sample_data(b.ps)$Treats, type = 'median'))
 
 ## C ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
@@ -1075,7 +1090,7 @@ c.dist <- as.dist(as.matrix(ksp.bdist)[sample_names(c.ps), sample_names(c.ps)])
 c_ord.nmds.wuni <- ordinate(c_prop.ps, method="NMDS", distance=c.dist)
 
 # Perform PermANOVA #
-c.perm <- adonis2(c.bdist~Treatment, data = c.met)
+c.perm <- adonis2(c.dist~Treatment, data = c.met)
 c.perm
 resave(c.perm, file = './abridged.RData')
 
@@ -1084,6 +1099,8 @@ c_beta.plot <- plot_ordination(c_prop.ps, c_ord.nmds.wuni, color="Treatment", ti
   theme_prism() +
   geom_point(size = 6)
 resave(c_beta.plot, './abridged.RData')
+
+TukeyHSD(betadisper(c.dist, group = sample_data(c.ps)$Treats, type = 'median'))
 
 ## D ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
@@ -1095,7 +1112,7 @@ d.dist <- as.dist(as.matrix(ksp.bdist)[sample_names(d.ps), sample_names(d.ps)])
 d_ord.nmds.wuni <- ordinate(d_prop.ps, method="NMDS", distance=d.dist)
 
 # Perform PermANOVA #
-d.perm <- adonis2(d.bdist~Treatment, data = d.met)
+d.perm <- adonis2(d.dist~Treatment, data = d.met)
 d.perm
 resave(d.perm, file = './abridged.RData')
 
@@ -1104,6 +1121,8 @@ d_beta.plot <- plot_ordination(d_prop.ps, d_ord.nmds.wuni, color="Treatment", ti
   theme_prism() +
   geom_point(size = 6)
 resave(d_beta.plot, file = './abridged.RData')
+
+TukeyHSD(betadisper(b.dist, group = sample_data(b.ps)$Treats, type = 'median'))
 
 ## E ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
@@ -1115,7 +1134,7 @@ e.dist <- as.dist(as.matrix(ksp.bdist)[sample_names(e.ps), sample_names(e.ps)])
 e_ord.nmds.wuni <- ordinate(e_prop.ps, method="NMDS", distance=e.dist)
 
 # Perform PermANOVA #
-e.perm <- adonis2(e.bdist~Treatment, data = e.met)
+e.perm <- adonis2(e.dist~Treatment, data = e.met)
 e.perm
 resave(e.perm, file = 'abridged.RData')
 
@@ -1124,6 +1143,8 @@ e_beta.plot <- plot_ordination(e_prop.ps, e_ord.nmds.wuni, color="Treatment", ti
   theme_prism() +
   geom_point(size = 6)
 resave(e_beta.plot, file = './abridged.RData')
+
+TukeyHSD(betadisper(e.dist, group = sample_data(e.ps)$Treats, type = 'median'))
 
 ## F ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
@@ -1135,7 +1156,7 @@ f.dist <- as.dist(as.matrix(ksp.bdist)[sample_names(f.ps), sample_names(f.ps)])
 f_ord.nmds.wuni <- ordinate(f_prop.ps, method="NMDS", distance=f.dist)
 
 # Perform PermANOVA #
-f.perm <- adonis2(f.bdist~Treatment, data = f.met)
+f.perm <- adonis2(f.dist~Treatment, data = f.met)
 f.perm
 resave(f.perm, file = './abridged.RData')
 
@@ -1144,6 +1165,8 @@ f_beta.plot <- plot_ordination(f_prop.ps, f_ord.nmds.wuni, color="Treatment", ti
   theme_prism() +
   geom_point(size = 6)
 resave(f_beta.plot, file = 'abridged.RData', file = './abrdiged.RData')
+
+TukeyHSD(betadisper(f.dist, group = sample_data(f.ps)$Treats, type = 'median'))
 
 ## G ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
@@ -1155,7 +1178,7 @@ g.dist <- as.dist(as.matrix(ksp.bdist)[sample_names(g.ps), sample_names(g.ps)])
 g_ord.nmds.wuni <- ordinate(g_prop.ps, method="NMDS", distance=g.dist)
 
 # Perform PermANOVA #
-g.perm <- adonis2(g.bdist~Treatment, data = g.met)
+g.perm <- adonis2(g.dist~Treatment, data = g.met)
 g.perm
 resave(g.perm, file = './abridged.RData')
 
@@ -1164,6 +1187,8 @@ g_beta.plot <- plot_ordination(g_prop.ps, g_ord.nmds.wuni, color="Treatment", ti
   theme_prism() +
   geom_point(size = 6)
 resave(g_beta.plot, file = './abridged.RData')
+
+TukeyHSD(betadisper(g.dist, group = sample_data(g.ps)$Treats, type = 'median'))
 
 ## H ##
 # Create a phyloseq object with just the sites of interest and calculate weighted unifrac distance #
@@ -1175,7 +1200,7 @@ h.dist <- as.dist(as.matrix(ksp.bdist)[sample_names(h.ps), sample_names(h.ps)])
 h_ord.nmds.wuni <- ordinate(h_prop.ps, method="NMDS", distance=h.dist)
 
 # Perform PermANOVA #
-h.perm <- adonis2(h.bdist~Treatment, data = h.met)
+h.perm <- adonis2(h.dist~Treatment, data = h.met)
 h.perm
 resave(h.perm, file = './abridged.RData')
 
@@ -1185,10 +1210,13 @@ h_beta.plot <- plot_ordination(h_prop.ps, h_ord.nmds.wuni, color="Treatment", ti
   geom_point(size = 6)
 resave(h_beta.plot, file = './abridged.RData')
 
+TukeyHSD(betadisper(h.dist, group = sample_data(h.ps)$Treats, type = 'median'))
+
 #### Stacked Histograms ####
 # First we start by making a color pallette for each unique ASV #
 if(!requireNamespace("Polychrome")) install.packages("Polychrome")
 library(Polychrome); packageVersion("Polychrome")
+set.seed(248)
 ksp.colr <- createPalette(ntaxa(final_ksp.ps),  c("#ff0000", "#00ff00", "#0000ff"))
 ksp.colr <- as.data.frame(ksp.colr)
 rownames(ksp.colr) <- taxa_names(final_ksp.ps)
@@ -1197,13 +1225,54 @@ rownames(ksp.colr) <- taxa_names(final_ksp.ps)
 ksp.colr[ntaxa(final_ksp.ps) + 1,] <- "#D4D4D4" 
 rownames(ksp.colr)[ntaxa(final_ksp.ps) + 1] <- "Other" 
 
+## All non-mycobloom samples ##
+hg_all.ps <- subset_samples(final_ksp.ps, Treatment != 'MycoBloom')
+hg_all.ps <- subset_samples(hg_all.ps, taxa_sums(hg_all.ps) > 0)
+
+# Save the taxa names of the top 9 taxa and add "Other" to the end. #
+hg_all.name <- names(sort(taxa_sums(hg_all.ps), decreasing = TRUE))[1:19]
+hg_all.name <- c(hg_all.name, "Other")
+hg_all.colr <- ksp.colr[hg_all.name,]
+
+# Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
+hg_all.ps <- merge_taxa(hg_all.ps, taxa_names(hg_all.ps)[!taxa_names(hg_all.ps) %in% hg_all.name])
+taxa_names(hg_all.ps)[5] <- "Other"
+tax_table(hg_all.ps)[5, "ASV"] <- "Other"
+
+# Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
+hg_all.df <- psmelt(hg_all.ps)
+hg_all.df$ASVs <- factor(hg_all.df$ASV, levels = hg_all.name)
+hg_all.df$Soil <- factor(hg_all.df$Treatment, levels = c("Control", "Low", "High"))
+
+# Plot the histogram #
+hg_all.plot <- ggplot(hg_all.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
+  geom_bar(stat='identity', position = 'fill') +
+  xlab('') +
+  ylab('') +
+  scale_fill_manual(name = "Fungal ASV", values = hg_all.colr) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02))) +
+  theme_bw() +
+  theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
+        axis.title = element_text(size = 22, family = "Liberation Sans"),
+        strip.text = element_text(size =18),
+        legend.text = element_text(size = 18, family = "Liberation Sans"),
+        legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
+        legend.position = 'right')
+
 ## MycoBloom Sample ##
 # Save a phyloseq Object that contains only the samples of interest #
 myc.ps <- subset_samples(final_ksp.ps, Treatment == "MycoBloom")
 myc.ps <- subset_taxa(myc.ps, taxa_sums(myc.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_myc.name <- names(sort(taxa_sums(myc.ps), decreasing = TRUE))[1:9]
+hg_myc.name <- names(sort(taxa_sums(myc.ps), decreasing = TRUE))[1:19]
 hg_myc.name <- c(hg_myc.name, "Other")
 hg_myc.colr <- ksp.colr[hg_myc.name,]
 
@@ -1223,34 +1292,38 @@ hg_myc.plot <- ggplot(hg_myc.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_myc.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "MycoBloom")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "MycoBloom")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 resave(hg_myc.plot, file = './abridged.RData')
 
 ## Site A Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_a.ps <- subset_samples(final_ksp.ps, Site == "A" | Treatment == "MycoBloom")
+hg_a.ps <- subset_samples(final_ksp.ps, Site == "A")
 hg_a.ps <- subset_taxa(hg_a.ps, taxa_sums(hg_a.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_a.name <- names(sort(taxa_sums(hg_a.ps), decreasing = TRUE))[1:9]
+hg_a.name <- names(sort(taxa_sums(hg_a.ps), decreasing = TRUE))[1:19]
 hg_a.name <- c(hg_a.name, "Other")
 hg_a.colr <- ksp.colr[hg_a.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_a.ps <- merge_taxa(hg_a.ps, taxa_names(hg_a.ps)[!taxa_names(hg_a.ps) %in% hg_a.name])
-taxa_names(hg_a.ps)[6] <- "Other"
-tax_table(hg_a.ps)[6, "ASV"] <- "Other"
+taxa_names(hg_a.ps)[16] <- "Other"
+tax_table(hg_a.ps)[16, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_a.df <- psmelt(hg_a.ps)
@@ -1263,35 +1336,39 @@ hg_a.plot <- ggplot(hg_a.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_a.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Site A")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "Site A")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 
 resave(hg_a.plot, file = './abridged.RData')
 
 ## Site B Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_b.ps <- subset_samples(final_ksp.ps, Site == "B" | Treatment == "MycoBloom")
+hg_b.ps <- subset_samples(final_ksp.ps, Site == "B")
 hg_b.ps <- subset_taxa(hg_b.ps, taxa_sums(hg_b.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_b.name <- names(sort(taxa_sums(hg_b.ps), decreasing = TRUE))[1:9]
+hg_b.name <- names(sort(taxa_sums(hg_b.ps), decreasing = TRUE))[1:19]
 hg_b.name <- c(hg_b.name, "Other")
 hg_b.colr <- ksp.colr[hg_b.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_b.ps <- merge_taxa(hg_b.ps, taxa_names(hg_b.ps)[!taxa_names(hg_b.ps) %in% hg_b.name])
-taxa_names(hg_b.ps)[8] <- "Other"
-tax_table(hg_b.ps)[8, "ASV"] <- "Other"
+taxa_names(hg_b.ps)[16] <- "Other"
+tax_table(hg_b.ps)[16, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_b.df <- psmelt(hg_b.ps)
@@ -1304,34 +1381,39 @@ hg_b.plot <- ggplot(hg_b.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_b.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Site B")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "Site B")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
+
 resave(hg_b.plot, file = './abridged.RData')
 
 ## Site C Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_c.ps <- subset_samples(final_ksp.ps, Site == "C" | Treatment == "MycoBloom")
+hg_c.ps <- subset_samples(final_ksp.ps, Site == "C")
 hg_c.ps <- subset_taxa(hg_c.ps, taxa_sums(hg_c.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_c.name <- names(sort(taxa_sums(hg_c.ps), decreasing = TRUE))[1:9]
+hg_c.name <- names(sort(taxa_sums(hg_c.ps), decreasing = TRUE))[1:19]
 hg_c.name <- c(hg_c.name, "Other")
 hg_c.colr <- ksp.colr[hg_c.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_c.ps <- merge_taxa(hg_c.ps, taxa_names(hg_c.ps)[!taxa_names(hg_c.ps) %in% hg_c.name])
-taxa_names(hg_c.ps)[9] <- "Other"
-tax_table(hg_c.ps)[9, "ASV"] <- "Other"
+taxa_names(hg_c.ps)[20] <- "Other"
+tax_table(hg_c.ps)[20, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_c.df <- psmelt(hg_c.ps)
@@ -1344,34 +1426,38 @@ hg_c.plot <- ggplot(hg_c.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_c.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Site C")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "Site C")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 resave(hg_c.plot, file = './abridged.RData')
 
 ## Site D Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_d.ps <- subset_samples(final_ksp.ps, Site == "D" | Treatment == "MycoBloom")
+hg_d.ps <- subset_samples(final_ksp.ps, Site == "D")
 hg_d.ps <- subset_taxa(hg_d.ps, taxa_sums(hg_d.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_d.name <- names(sort(taxa_sums(hg_d.ps), decreasing = TRUE))[1:9]
+hg_d.name <- names(sort(taxa_sums(hg_d.ps), decreasing = TRUE))[1:19]
 hg_d.name <- c(hg_d.name, "Other")
 hg_d.colr <- ksp.colr[hg_d.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_d.ps <- merge_taxa(hg_d.ps, taxa_names(hg_d.ps)[!taxa_names(hg_d.ps) %in% hg_d.name])
-taxa_names(hg_d.ps)[7] <- "Other"
-tax_table(hg_d.ps)[7, "ASV"] <- "Other"
+taxa_names(hg_d.ps)[17] <- "Other"
+tax_table(hg_d.ps)[17, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_d.df <- psmelt(hg_d.ps)
@@ -1384,34 +1470,38 @@ hg_d.plot <- ggplot(hg_d.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_d.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Site D")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "Site D")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 resave(hg_d.plot, file = './abridged.RData')
 
 ## Site E Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_e.ps <- subset_samples(final_ksp.ps, Site == "E" | Treatment == "MycoBloom")
+hg_e.ps <- subset_samples(final_ksp.ps, Site == "E")
 hg_e.ps <- subset_taxa(hg_e.ps, taxa_sums(hg_e.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_e.name <- names(sort(taxa_sums(hg_e.ps), decreasing = TRUE))[1:9]
+hg_e.name <- names(sort(taxa_sums(hg_e.ps), decreasing = TRUE))[1:19]
 hg_e.name <- c(hg_e.name, "Other")
 hg_e.colr <- ksp.colr[hg_e.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_e.ps <- merge_taxa(hg_e.ps, taxa_names(hg_e.ps)[!taxa_names(hg_e.ps) %in% hg_e.name])
-taxa_names(hg_e.ps)[9] <- "Other"
-tax_table(hg_e.ps)[9, "ASV"] <- "Other"
+taxa_names(hg_e.ps)[3] <- "Other"
+tax_table(hg_e.ps)[3, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_e.df <- psmelt(hg_e.ps)
@@ -1424,34 +1514,38 @@ hg_e.plot <- ggplot(hg_e.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_e.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Site E")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "Site E")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 resave(hg_e.plot, file = './abridged.RData')
 
 ## Site F Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_f.ps <- subset_samples(final_ksp.ps, Site == "F" | Treatment == "MycoBloom")
+hg_f.ps <- subset_samples(final_ksp.ps, Site == "F")
 hg_f.ps <- subset_taxa(hg_f.ps, taxa_sums(hg_f.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_f.name <- names(sort(taxa_sums(hg_f.ps), decreasing = TRUE))[1:9]
+hg_f.name <- names(sort(taxa_sums(hg_f.ps), decreasing = TRUE))[1:19]
 hg_f.name <- c(hg_f.name, "Other")
 hg_f.colr <- ksp.colr[hg_f.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_f.ps <- merge_taxa(hg_f.ps, taxa_names(hg_f.ps)[!taxa_names(hg_f.ps) %in% hg_f.name])
-taxa_names(hg_f.ps)[4] <- "Other"
-tax_table(hg_f.ps)[4, "ASV"] <- "Other"
+taxa_names(hg_f.ps)[10] <- "Other"
+tax_table(hg_f.ps)[10, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_f.df <- psmelt(hg_f.ps)
@@ -1464,34 +1558,38 @@ hg_f.plot <- ggplot(hg_f.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_f.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Site F")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "Site F")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 resave(hg_f.plot, file = './abridged.RData')
 
 ## Site G Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_g.ps <- subset_samples(final_ksp.ps, Site == "G" | Treatment == "MycoBloom")
+hg_g.ps <- subset_samples(final_ksp.ps, Site == "G")
 hg_g.ps <- subset_taxa(hg_g.ps, taxa_sums(hg_g.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_g.name <- names(sort(taxa_sums(hg_g.ps), decreasing = TRUE))[1:9]
+hg_g.name <- names(sort(taxa_sums(hg_g.ps), decreasing = TRUE))[1:19]
 hg_g.name <- c(hg_g.name, "Other")
 hg_g.colr <- ksp.colr[hg_g.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_g.ps <- merge_taxa(hg_g.ps, taxa_names(hg_g.ps)[!taxa_names(hg_g.ps) %in% hg_g.name])
-taxa_names(hg_g.ps)[7] <- "Other"
-tax_table(hg_g.ps)[7, "ASV"] <- "Other"
+taxa_names(hg_g.ps)[5] <- "Other"
+tax_table(hg_g.ps)[5, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_g.df <- psmelt(hg_g.ps)
@@ -1504,34 +1602,38 @@ hg_g.plot <- ggplot(hg_g.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_g.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Site G")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "Site G")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 resave(hg_g.plot, file = './abridged.RData')
 
 ## Site H Samples ##
 # Save a phyloseq Object that contains only the samples of interest #
-hg_h.ps <- subset_samples(final_ksp.ps, Site == "H" | Treatment == "MycoBloom")
+hg_h.ps <- subset_samples(final_ksp.ps, Site == "H")
 hg_h.ps <- subset_taxa(hg_h.ps, taxa_sums(hg_h.ps) > 0)
 
 # Save the taxa names of the top 9 taxa and add "Other" to the end. #
-hg_h.name <- names(sort(taxa_sums(hg_h.ps), decreasing = TRUE))[1:9]
+hg_h.name <- names(sort(taxa_sums(hg_h.ps), decreasing = TRUE))[1:19]
 hg_h.name <- c(hg_h.name, "Other")
 hg_h.colr <- ksp.colr[hg_h.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_h.ps <- merge_taxa(hg_h.ps, taxa_names(hg_h.ps)[!taxa_names(hg_h.ps) %in% hg_h.name])
-taxa_names(hg_h.ps)[10] <- "Other"
-tax_table(hg_h.ps)[10, "ASV"] <- "Other"
+taxa_names(hg_h.ps)[15] <- "Other"
+tax_table(hg_h.ps)[15, "ASV"] <- "Other"
 
 # Save the phyloseq object as a data.frame and make factors that guide the plot what to plot #
 hg_h.df <- psmelt(hg_h.ps)
@@ -1544,17 +1646,21 @@ hg_h.plot <- ggplot(hg_h.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_h.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Site H")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "Site H")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 resave(hg_h.plot, file = './abridged.RData')
 
@@ -1563,6 +1669,7 @@ hg_ksp.colr <- ksp.colr[hg_myc.name,]
 
 # Create a phyloseq object that saves the abundances of the top 9 ASVs and groups the remaining taxa into "Other" #
 hg_ksp.ps <- merge_taxa(final_ksp.ps, taxa_names(final_ksp.ps)[!taxa_names(final_ksp.ps) %in% hg_myc.name])
+hg_ksp.ps <- subset_samples(hg_ksp.ps, Treatment != "MycoBloom")
 taxa_names(hg_ksp.ps)[1] <- "Other"
 tax_table(hg_ksp.ps)[1, "ASV"] <- "Other"
 
@@ -1577,468 +1684,27 @@ hg_ksp.plot <- ggplot(hg_ksp.df, aes(x = Soil, y = Abundance, fill = ASVs)) +
   xlab('') +
   ylab('') +
   scale_fill_manual(name = "Fungal ASV", values = hg_ksp.colr) +
-  scale_y_continuous(sec.axis = dup_axis(name = "Across All Sites")) +
+  scale_y_continuous(breaks = seq(0,1, 0.20), expand = expansion(mult = c(0.002, 0.02)), sec.axis = dup_axis(name = "MycoBloom ASVs")) +
   theme_bw() +
   theme(axis.text = element_text(color = "black", size = 18, family = "Liberation Sans"),
-        axis.text.x.bottom = element_text(color = "black", size = 18, family = "Liberation Sans", angle = -45, vjust = 0.6, hjust = 0.1),
+        axis.text.x.bottom = element_text(color = "black", size = 28, family = "Liberation Sans", face = 'bold'),
         axis.title = element_text(size = 22, family = "Liberation Sans"),
         strip.text = element_text(size =18),
         legend.text = element_text(size = 18, family = "Liberation Sans"),
         legend.title = element_text(size = 18, face = "bold", family = "Liberation Sans"),
-        axis.text.y.right = element_blank(),
+        legend.background = element_rect(color = 'black'),
+        axis.text.y.left  = element_text(size = 24, family = "Liberation Sans", face = 'bold', vjust = 0.45),
         axis.ticks.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
         axis.title.y.right = element_text(size = 18, family = "Liberation Sans", face = 'bold', angle = -90),
+        axis.ticks.y.left = element_line(linewidth = 1.5),
+        legend.key.spacing.y = unit(2, 'mm'),
         legend.position = 'right')
 resave(hg_ksp.plot, file = './abridged.RData')
 
-#### Set Plot for overlapping taxa with MycoBloom and Treatments ####
-# Save the names of the taxa found in the mycobloom sample #
-myc.name <- taxa_names(myc.ps)
-
-# Subset the whole phyloseq object by treatments and filter to only contain taxa found in the MycoBloom #
-con.ps <- subset_samples(final_ksp.ps, Treatment == "Control")
-con.ps <- subset_taxa(con.ps, taxa_names(con.ps) %in% myc.name)
-con.ps <- subset_taxa(con.ps, taxa_sums(con.ps) > 0)
-con.name <- taxa_names(con.ps)
-
-hig.ps <- subset_samples(final_ksp.ps, Treatment == "High")
-hig.ps <- subset_taxa(hig.ps, taxa_names(hig.ps) %in% myc.name)
-hig.ps <- subset_taxa(hig.ps, taxa_sums(hig.ps) > 0)
-hig.name <- taxa_names(hig.ps)
-
-low.ps <- subset_samples(final_ksp.ps, Treatment == "Low")
-low.ps <- subset_taxa(low.ps, taxa_names(low.ps) %in% myc.name)
-low.ps <- subset_taxa(low.ps, taxa_sums(low.ps) > 0)
-low.name <- taxa_names(low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-if(!requireNamespace("ComplexUpset")) install.packages("ComplexUpset")
-library(ComplexUpset); packageVersion("ComplexUpset")
-all.name <- list(MycoBloom = myc.name, Control = con.name, High = hig.name, Low = low.name)
-all.asv <- data.frame(ASV = myc.name)
-for (group in names(all.name)) {
-  all.asv[[group]] <- all.asv$ASV %in% all.name[[group]]
-}
-
-myc_nc.name <- filter(all.asv, High == "TRUE" | Low == "TRUE")
-myc_nc.name <- filter(myc_nc.name, Control == "FALSE")
-resave(myc_nc.name, file = 'abridged.RData')
-
-myc_myc.name <- filter(all.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(myc_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-myc.set <- upset(
-  all.asv,
-  intersect = c("MycoBloom", "Control", "High", "Low"),
-  base_annotations = list(
-    'Intersection Size' = intersection_size(width = 0.9)),
-  name = "Shared Inoculant ASVs",
-  queries = list(
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", 'High'), color = "black", fill = "blue")),
-  )
-resave(myc.set, file = './abridged.RData')
-
-## Site A Set Plot
-a_con.ps <- subset_samples(a.ps, Treatment == "Control")
-a_con.ps <- subset_taxa(a_con.ps, taxa_names(a_con.ps) %in% myc.name)
-a_con.ps <- subset_taxa(a_con.ps, taxa_sums(a_con.ps) > 0)
-a_con.name <- taxa_names(a_con.ps)
-
-a_hig.ps <- subset_samples(a.ps, Treatment == "High")
-a_hig.ps <- subset_taxa(a_hig.ps, taxa_names(a_hig.ps) %in% myc.name)
-a_hig.ps <- subset_taxa(a_hig.ps, taxa_sums(a_hig.ps) > 0)
-a_hig.name <- taxa_names(a_hig.ps)
-
-a_low.ps <- subset_samples(a.ps, Treatment == "Low")
-a_low.ps <- subset_taxa(a_low.ps, taxa_names(a_low.ps) %in% myc.name)
-a_low.ps <- subset_taxa(a_low.ps, taxa_sums(a_low.ps) > 0)
-a_low.name <- taxa_names(a_low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-a.name <- list(MycoBloom = myc.name, Control = a_con.name, High = a_hig.name, Low = a_low.name)
-a.asv <- data.frame(ASV = myc.name)
-for (group in names(a.name)) {
-  a.asv[[group]] <- a.asv$ASV %in% a.name[[group]]}
-
-# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
-a_nc.name <- filter(a.asv, High == "TRUE" | Low == "TRUE")
-a_nc.name <- filter(a_nc.name, Control == "FALSE")
-resave(a_nc.name, file = 'abridged.RData')
-
-a_myc.name <- filter(a.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(a_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-a.set <- upset(
-  a.asv,
-  intersect = c("MycoBloom", "Control", "High", "Low"),
-  base_annotations = list(
-    'Intersection size' = intersection_size(width = 0.9)
-  ),
-  queries = list(
-    upset_query(intersect = "MycoBloom", color = "black", fill = "orange"),
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "Low"), color = "black", fill = "blue"))
-  )
-resave(a.set, file = './abridged.RData')
-
-## Site B Set Plot
-b_con.ps <- subset_samples(b.ps, Treatment == "Control")
-b_con.ps <- subset_taxa(b_con.ps, taxa_names(b_con.ps) %in% myc.name)
-b_con.ps <- subset_taxa(b_con.ps, taxa_sums(b_con.ps) > 0)
-b_con.name <- taxa_names(b_con.ps)
-
-b_hig.ps <- subset_samples(b.ps, Treatment == "High")
-b_hig.ps <- subset_taxa(b_hig.ps, taxa_names(b_hig.ps) %in% myc.name)
-b_hig.ps <- subset_taxa(b_hig.ps, taxa_sums(b_hig.ps) > 0)
-b_hig.name <- taxa_names(b_hig.ps)
-
-b_low.ps <- subset_samples(b.ps, Treatment == "Low")
-b_low.ps <- subset_taxa(b_low.ps, taxa_names(b_low.ps) %in% myc.name)
-b_low.ps <- subset_taxa(b_low.ps, taxa_sums(b_low.ps) > 0)
-b_low.name <- taxa_names(b_low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-b.name <- list(MycoBloom = myc.name, Control = b_con.name, High = b_hig.name, Low = b_low.name)
-b.asv <- data.frame(ASV = myc.name)
-for (group in names(b.name)) {
-  b.asv[[group]] <- b.asv$ASV %in% b.name[[group]]}
-
-# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
-b_nc.name <- filter(b.asv, High == "TRUE" | Low == "TRUE")
-b_nc.name <- filter(b_nc.name, Control == "FALSE")
-resave(b_nc.name, file = 'abridged.RData')
-
-b_myc.name <- filter(b.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(b_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-b.set <- upset(
-  b.asv,
-  intersect = c("MycoBloom", "Control", "High", "Low"),
-  base_annotations = list(
-    'Intersection size' = intersection_size(width = 0.9)
-  ),
-  queries = list(
-    upset_query(intersect = "MycoBloom", color = "black", fill = "orange"),
-    upset_query(intersect = c("MycoBloom", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"))
-  )
-resave(b.set, file = './abridged.RData')
-
-## Site C Set Plot
-c_con.ps <- subset_samples(c.ps, Treatment == "Control")
-c_con.ps <- subset_taxa(c_con.ps, taxa_names(c_con.ps) %in% myc.name)
-c_con.ps <- subset_taxa(c_con.ps, taxa_sums(c_con.ps) > 0)
-c_con.name <- taxa_names(c_con.ps)
-
-c_hig.ps <- subset_samples(c.ps, Treatment == "High")
-c_hig.ps <- subset_taxa(c_hig.ps, taxa_names(c_hig.ps) %in% myc.name)
-c_hig.ps <- subset_taxa(c_hig.ps, taxa_sums(c_hig.ps) > 0)
-c_hig.name <- taxa_names(c_hig.ps)
-
-c_low.ps <- subset_samples(c.ps, Treatment == "Low")
-c_low.ps <- subset_taxa(c_low.ps, taxa_names(c_low.ps) %in% myc.name)
-c_low.ps <- subset_taxa(c_low.ps, taxa_sums(c_low.ps) > 0)
-c_low.name <- taxa_names(c_low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-c.name <- list(MycoBloom = myc.name, Control = c_con.name, High = c_hig.name, Low = c_low.name)
-c.asv <- data.frame(ASV = myc.name)
-for (group in names(c.name)) {
-  c.asv[[group]] <- c.asv$ASV %in% c.name[[group]]}
-
-# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
-c_nc.name <- filter(c.asv, High == "TRUE" | Low == "TRUE")
-c_nc.name <- filter(c_nc.name, Control == "FALSE")
-resave(c_nc.name, file = 'abridged.RData')
-
-c_myc.name <- filter(c.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(c_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-c.set <- upset(
-  c.asv,
-  intersect = c("MycoBloom", "Control", "High", "Low"),
-  base_annotations = list(
-    'Intersection size' = intersection_size(width = 0.9)
-  ),
-  queries = list(
-    upset_query(intersect = "MycoBloom", color = "black", fill = "orange"),
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "High"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "Low"), color = "black", fill = "blue"))
-)
-resave(c.set, file = './abridged.RData')
-
-## Site D Set Plot
-d_con.ps <- subset_samples(d.ps, Treatment == "Control")
-d_con.ps <- subset_taxa(d_con.ps, taxa_names(d_con.ps) %in% myc.name)
-d_con.ps <- subset_taxa(d_con.ps, taxa_sums(d_con.ps) > 0)
-d_con.name <- taxa_names(d_con.ps)
-
-d_hig.ps <- subset_samples(d.ps, Treatment == "High")
-d_hig.ps <- subset_taxa(d_hig.ps, taxa_names(d_hig.ps) %in% myc.name)
-d_hig.ps <- subset_taxa(d_hig.ps, taxa_sums(d_hig.ps) > 0)
-d_hig.name <- taxa_names(d_hig.ps)
-
-d_low.ps <- subset_samples(d.ps, Treatment == "Low")
-d_low.ps <- subset_taxa(d_low.ps, taxa_names(d_low.ps) %in% myc.name)
-d_low.ps <- subset_taxa(d_low.ps, taxa_sums(d_low.ps) > 0)
-d_low.name <- taxa_names(d_low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-d.name <- list(MycoBloom = myc.name, Control = d_con.name, High = d_hig.name, Low = d_low.name)
-d.asv <- data.frame(ASV = myc.name)
-for (group in names(d.name)) {
-  d.asv[[group]] <- d.asv$ASV %in% d.name[[group]]}
-
-# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
-d_nc.name <- filter(d.asv, High == "TRUE" | Low == "TRUE")
-d_nc.name <- filter(d_nc.name, Control == "FALSE")
-resave(d_nc.name, file = 'abridged.RData')
-
-d_myc.name <- filter(d.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(d_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-d.set <- upset(
-  d.asv,
-  intersect = c("MycoBloom", "Control", "Low", "High"),
-  base_annotations = list(
-    'Intersection size' = intersection_size(width = 0.9)
-  ),
-  queries = list(
-    upset_query(intersect = "MycoBloom", color = "black", fill = "orange"),
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "High"), color = "black", fill = "blue"))
-)
-resave(d.set, file = './abridged.RData')
-
-## Site E Set Plot
-e_con.ps <- subset_samples(e.ps, Treatment == "Control")
-e_con.ps <- subset_taxa(e_con.ps, taxa_names(e_con.ps) %in% myc.name)
-e_con.ps <- subset_taxa(e_con.ps, taxa_sums(e_con.ps) > 0)
-e_con.name <- taxa_names(e_con.ps)
-
-e_hig.ps <- subset_samples(e.ps, Treatment == "High")
-e_hig.ps <- subset_taxa(e_hig.ps, taxa_names(e_hig.ps) %in% myc.name)
-e_hig.ps <- subset_taxa(e_hig.ps, taxa_sums(e_hig.ps) > 0)
-e_hig.name <- taxa_names(e_hig.ps)
-
-e_low.ps <- subset_samples(e.ps, Treatment == "Low")
-e_low.ps <- subset_taxa(e_low.ps, taxa_names(e_low.ps) %in% myc.name)
-e_low.ps <- subset_taxa(e_low.ps, taxa_sums(e_low.ps) > 0)
-e_low.name <- taxa_names(e_low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-e.name <- list(MycoBloom = myc.name, Control = e_con.name, High = e_hig.name, Low = e_low.name)
-e.asv <- data.frame(ASV = myc.name)
-for (group in names(e.name)) {
-  e.asv[[group]] <- e.asv$ASV %in% e.name[[group]]}
-
-# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
-e_nc.name <- filter(e.asv, High == "TRUE" | Low == "TRUE")
-e_nc.name <- filter(e_nc.name, Control == "FALSE")
-resave(e_nc.name, file = 'abridged.RData')
-
-e_myc.name <- filter(e.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(e_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-e.set <- upset(
-  e.asv,
-  intersect = c("MycoBloom", "Control", "High", "Low"),
-  base_annotations = list(
-    'Intersection size' = intersection_size(width = 0.9)
-  ),
-  queries = list(
-    upset_query(intersect = "MycoBloom", color = "black", fill = "orange"),
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"))
-  )
-resave(e.set, file = './abridged.RData')
-
-## Site F Set Plot
-f_con.ps <- subset_samples(f.ps, Treatment == "Control")
-f_con.ps <- subset_taxa(f_con.ps, taxa_names(f_con.ps) %in% myc.name)
-f_con.ps <- subset_taxa(f_con.ps, taxa_sums(f_con.ps) > 0)
-f_con.name <- taxa_names(f_con.ps)
-
-f_hig.ps <- subset_samples(f.ps, Treatment == "High")
-f_hig.ps <- subset_taxa(f_hig.ps, taxa_names(f_hig.ps) %in% myc.name)
-f_hig.ps <- subset_taxa(f_hig.ps, taxa_sums(f_hig.ps) > 0)
-f_hig.name <- taxa_names(f_hig.ps)
-
-f_low.ps <- subset_samples(f.ps, Treatment == "Low")
-f_low.ps <- subset_taxa(f_low.ps, taxa_names(f_low.ps) %in% myc.name)
-f_low.ps <- subset_taxa(f_low.ps, taxa_sums(f_low.ps) > 0)
-f_low.name <- taxa_names(f_low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-f.name <- list(MycoBloom = myc.name, Control = f_con.name, High = f_hig.name, Low = f_low.name)
-f.asv <- data.frame(ASV = myc.name)
-for (group in names(e.name)) {
-  f.asv[[group]] <- f.asv$ASV %in% f.name[[group]]}
-
-# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
-f_nc.name <- filter(f.asv, High == "TRUE" | Low == "TRUE")
-f_nc.name <- filter(f_nc.name, Control == "FALSE")
-resave(f_nc.name, file = 'abridged.RData')
-
-f_myc.name <- filter(f.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(f_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-f.set <- upset(
-  f.asv,
-  intersect = c("MycoBloom", "Control", "High", "Low"),
-  base_annotations = list(
-    'Intersection size' = intersection_size(width = 0.9)
-  ),
-  queries = list(
-    upset_query(intersect = "MycoBloom", color = "black", fill = "orange"),
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "High"), color = "black", fill = "blue"))
-)
-resave(f.set, file = './abridged.RData')
-
-## Site G Set Plot
-g_con.ps <- subset_samples(g.ps, Treatment == "Control")
-g_con.ps <- subset_taxa(g_con.ps, taxa_names(g_con.ps) %in% myc.name)
-g_con.ps <- subset_taxa(g_con.ps, taxa_sums(g_con.ps) > 0)
-g_con.name <- taxa_names(g_con.ps)
-
-g_hig.ps <- subset_samples(g.ps, Treatment == "High")
-g_hig.ps <- subset_taxa(g_hig.ps, taxa_names(g_hig.ps) %in% myc.name)
-g_hig.ps <- subset_taxa(g_hig.ps, taxa_sums(g_hig.ps) > 0)
-g_hig.name <- taxa_names(g_hig.ps)
-
-g_low.ps <- subset_samples(g.ps, Treatment == "Low")
-g_low.ps <- subset_taxa(g_low.ps, taxa_names(g_low.ps) %in% myc.name)
-g_low.ps <- subset_taxa(g_low.ps, taxa_sums(g_low.ps) > 0)
-g_low.name <- taxa_names(g_low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-g.name <- list(MycoBloom = myc.name, Control = g_con.name, High = g_hig.name, Low = g_low.name)
-g.asv <- data.frame(ASV = myc.name)
-for (group in names(g.name)) {
-  g.asv[[group]] <- g.asv$ASV %in% g.name[[group]]}
-
-# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
-g_nc.name <- filter(g.asv, High == "TRUE" | Low == "TRUE")
-g_nc.name <- filter(g_nc.name, Control == "FALSE")
-resave(a_nc.name, file = 'abridged.RData')
-
-g_myc.name <- filter(g.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(g_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-g.set <- upset(
-  g.asv,
-  intersect = c("MycoBloom", "Control", "High", "Low"),
-  base_annotations = list(
-    'Intersection size' = intersection_size(width = 0.9)
-  ),
-  queries = list(
-    upset_query(intersect = "MycoBloom", color = "black", fill = "orange"),
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "High"), color = "black", fill = "blue"))
-)
-resave(g.set, file = './abridged.RData')
-
-## Site H Set Plot
-h_con.ps <- subset_samples(h.ps, Treatment == "Control")
-h_con.ps <- subset_taxa(h_con.ps, taxa_names(h_con.ps) %in% myc.name)
-h_con.ps <- subset_taxa(h_con.ps, taxa_sums(h_con.ps) > 0)
-h_con.name <- taxa_names(h_con.ps)
-
-h_hig.ps <- subset_samples(h.ps, Treatment == "High")
-h_hig.ps <- subset_taxa(h_hig.ps, taxa_names(h_hig.ps) %in% myc.name)
-h_hig.ps <- subset_taxa(h_hig.ps, taxa_sums(h_hig.ps) > 0)
-h_hig.name <- taxa_names(h_hig.ps)
-
-h_low.ps <- subset_samples(h.ps, Treatment == "Low")
-h_low.ps <- subset_taxa(h_low.ps, taxa_names(h_low.ps) %in% myc.name)
-h_low.ps <- subset_taxa(h_low.ps, taxa_sums(h_low.ps) > 0)
-h_low.name <- taxa_names(h_low.ps)
-
-# Construct a data.frame that contains TRUE and FALSE values for taxa presence #
-h.name <- list(MycoBloom = myc.name, Control = h_con.name, High = h_hig.name, Low = h_low.name)
-h.asv <- data.frame(ASV = myc.name)
-for (group in names(h.name)) {
-  h.asv[[group]] <- h.asv$ASV %in% h.name[[group]]}
-
-# Save the names of the taxa found in just the Mycobloom and ones found in everything but the control #
-h_nc.name <- filter(h.asv, High == "TRUE" | Low == "TRUE")
-h_nc.name <- filter(h_nc.name, Control == "FALSE")
-resave(h_nc.name, file = 'abridged.RData')
-
-h_myc.name <- filter(h.asv, Control == "FALSE" & High == "FALSE" & Low == "FALSE")
-resave(h_myc.name, file = './abridged.RData')
-
-# Create the set plot #
-h.set <- upset(
-  h.asv,
-  intersect = c("MycoBloom", "Control", "High", "Low"),
-  base_annotations = list(
-    'Intersection size' = intersection_size(width = 0.9)
-  ),
-  queries = list(
-    upset_query(intersect = "MycoBloom", color = "black", fill = "orange"),
-    upset_query(intersect = c("MycoBloom", "High", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "Low"), color = "black", fill = "blue"),
-    upset_query(intersect = c("MycoBloom", "High"), color = "black", fill = "blue"))
-  )
-resave(h.set, file = './abridged.RData')
-
-#### Percentage of Community Made Up of Things found in the Inoculant ####
-# Make a phyloseq object that contains just the total counts of ASVs found in MycoBloom Community #
-tax_check.ps <- subset_taxa(final_ksp.ps, taxa_names(final_ksp.ps) %in% taxa_names(myc.ps))
-tax_check.ps <- subset_samples(tax_check.ps, Treatment != 'MycoBloom')
-
-# Filter such that only samples with High inoculant levels #
-tax_check_hi.ps <- subset_samples(tax_check.ps, Treatment == "High")
-hig.ps <- subset_samples(final_ksp.ps, Treatment == "High")
-
-# Filter such that only samples with Low inoculant levels #
-tax_check_lo.ps <- subset_samples(tax_check.ps, Treatment == "Low")
-low.ps <- subset_samples(final_ksp.ps, Treatment == "Low")
-
-# Filter such that only samples with Control inoculant levels #
-tax_check_co.ps <- subset_samples(tax_check.ps, Treatment == "Control")
-con.ps <- subset_samples(final_ksp.ps, Treatment == "Control")
-
-# Calculate and save the percentages in which the community is made up of MycoBloom Members #
-ksp_perc_co.df <- data.frame(Percent = sample_sums(tax_check_co.ps)/ sample_sums(con.ps),
-                             Treatment = "Control")
-ksp_perc_hi.df <- data.frame(Percent = sample_sums(tax_check_hi.ps)/ sample_sums(hig.ps),
-                             Treatment = "High")
-ksp_perc_lo.df <- data.frame(Percent = sample_sums(tax_check_lo.ps)/ sample_sums(low.ps),
-                             Treatment = "Low")
-ksp_perc.df <- rbind(ksp_perc_co.df, ksp_perc_hi.df, ksp_perc_lo.df)
-ksp_perc.df$Site <- substring(rownames(ksp_perc.df), 1,1)
-
-ksp_perc.df <- arrange(ksp_perc.df, Site, Treatment)
-
-# Perform a One way Anova to see if there are differences #
-ksp_perc.df$Prop <- ksp_perc.df$Percent / 100
-ksp_perc.df$Trans <- asin(sqrt(ksp_perc.df$Prop))
-ksp_perc.fit <- lm(Trans ~ Treatment * Site, data = ksp_perc.df)
-ksp_perc.aov <- aov(ksp_perc.fit)
-summary(ksp_perc.aov)
-leveneTest(ksp_perc.fit)
-shapiro.test(resid(ksp_perc.fit))
-ksp_perc.hsd <- as.data.frame(TukeyHSD(ksp_perc.aov, 'Treatment:Site', ordered = TRUE)$`Treatment:Site`)
-ksp_perc.sig <- filter(ksp_perc.hsd, `p adj` < 0.05)
-# Treatment does not significantly affect the percentage of community composition made up of MycoBloom ASVs # 
-
 #### Differential Abundance ####
-if(!requireNamespace("maaslin3")) BiocManager::install("biobakery/maaslin3")
-library(maaslin3); packageVersion("maaslin3")
+if(!requireNamespace("Maaslin2")) BiocManager::install("biobakery/maaslin2")
+library(Maaslin2); packageVersion("Maaslin2")
 
 if(!dir.exists('./maas')){
   dir.create('./maas')
@@ -2048,391 +1714,521 @@ if(!dir.exists('./maas')){
 nomy.ps <- subset_samples(final_ksp.ps, Treatment != "MycoBloom")
 decompose_ps(nomy.ps, 'nomy')
 
+# Save the taxa names of the MycoBloom Community #
+myc.name <- taxa_names(myc.ps)
+
 ### Site A ###
 # Calculate differential abundance using the mixed linear model with treatment as a fixed effect and site as a random effect #
-a.maas <- maaslin3(input_data = nomy$otu,
+a.maas <- Maaslin2(input_data = nomy$otu,
                    input_metadata = nomy$met,
                    output = './maas/a.maas',
-                   formula = '~ Group',
+                   fixed_effects = "Both",
                    normalization = "TSS",
                    transform = "LOG",
                    correction = "BH",
-                   reference = c('Group,AC'))
+                   reference = c('Both,AC'),
+                   plot_scatter = FALSE,
+                   plot_heatmap = FALSE,)
+
 # Save the results tables for abundance and prevalence, respectively #  
-a_abun.res <- a.maas$fit_data_abundance$results
-a_prev.res <- a.maas$fit_data_prevalence$results
+a_maas.res <- a.maas$results
 
-## Abundance Associations ##
 # Save only the results of with values corresponding to communities found within Site A #
-a_alla.res <- c()
-for(i in 1:nrow(a_abun.res)){
-  if(a_abun.res$value[i] == "AHI" | a_abun.res$value[i] == "ALO"){
-    a_alla.res <- rbind(a_alla.res, a_abun.res[i,])
+a_comp.res <- c()
+for(i in 1:nrow(a_maas.res)){
+  if(a_maas.res$value[i] == "AHI" | a_maas.res$value[i] == "ALO"){
+    a_comp.res <- rbind(a_comp.res, a_maas.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-a_siga.res <- c()
-for(i in 1:nrow(a_alla.res)){
-  if(!is.na(a_alla.res$qval_individual[i]) && a_alla.res$qval_individual[i] < 0.1){
-    a_siga.res <- rbind(a_siga.res, a_alla.res[i,])
+# Save only the significant results #
+a_sigs.res <- c()
+for(i in 1:nrow(a_comp.res)){
+  if(a_comp.res$qval[i] < 0.05){
+    a_sigs.res <- rbind(a_sigs.res, a_comp.res[i,])
   }
 }
 
-## Prevalence Associations ##
-# Save only the results of with values corresponding to communities found within Site A #
-a_allp.res <- c()
-for(i in 1:nrow(a_prev.res)){
-  if(a_prev.res$value[i] == "AHI" | a_prev.res$value[i] == "ALO"){
-    a_allp.res <- rbind(a_allp.res, a_prev.res[i,])
-  }
-}
-
-# Save all of the significant results to a new data frame #
-a_sigp.res <- c()
-for(i in 1:nrow(a_allp.res)){
-  if(!is.na(a_allp.res$qval_individual[i]) && a_allp.res$qval_individual[i] < 0.1){
-    a_sigp.res <- rbind(a_sigp.res, a_allp.res[i,])
+# Save the significant results that correspond to taxa found in the mycobloom community #
+a_mycs.res <- c()
+for(i in 1:nrow(a_sigs.res)){
+  if(a_sigs.res$feature[i] %in% myc.name){
+    a_mycs.res <- rbind(a_mycs.res, a_sigs.res[i,])
   }
 }
 
 ### Site B ###
 # Calculate differential abundance using the mixed linear model with treatment as a fixed effect and site as a random effect #
-b.maas <- maaslin3(input_data = nomy$otu,
+b.maas <- Maaslin2(input_data = nomy$otu,
                    input_metadata = nomy$met,
                    output = './maas/b.maas',
-                   formula = '~ Group',
+                   fixed_effects = "Both",
                    normalization = "TSS",
                    transform = "LOG",
                    correction = "BH",
-                   reference = c('Group,BC'))
+                   reference = c('Both,BC'),
+                   plot_scatter = FALSE,
+                   plot_heatmap = FALSE,)
+
 # Save the results tables for abundance and prevalence, respectively #  
-b_abun.res <- b.maas$fit_data_abundance$results
-b_prev.res <- b.maas$fit_data_prevalence$results
+b_maas.res <- b.maas$results
 
-## Abundance Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-b_alla.res <- c()
-for(i in 1:nrow(b_abun.res)){
-  if(b_abun.res$value[i] == "BHI" | b_abun.res$value[i] == "BLO"){
-    b_alla.res <- rbind(b_alla.res, b_abun.res[i,])
+# Save only the results of with values corresponding to communities found within Site A #
+b_comp.res <- c()
+for(i in 1:nrow(b_maas.res)){
+  if(b_maas.res$value[i] == "BHI" | b_maas.res$value[i] == "BLO"){
+    b_comp.res <- rbind(b_comp.res, b_maas.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-b_siga.res <- c()
-for(i in 1:nrow(b_alla.res)){
-  if(!is.na(b_alla.res$qval_individual[i]) && b_alla.res$qval_individual[i] < 0.1){
-    b_siga.res <- rbind(b_siga.res, b_alla.res[i,])
+# Save only the significant results #
+b_sigs.res <- c()
+for(i in 1:nrow(b_comp.res)){
+  if(b_comp.res$qval[i] < 0.05){
+    b_sigs.res <- rbind(b_sigs.res, b_comp.res[i,])
   }
 }
 
-## Prevalence Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-b_allp.res <- c()
-for(i in 1:nrow(b_prev.res)){
-  if(b_prev.res$value[i] == "BHI" | b_prev.res$value[i] == "BLO"){
-    b_allp.res <- rbind(b_allp.res, b_prev.res[i,])
-  }
-}
-
-# Save all of the significant results to a new data frame #
-b_sigp.res <- c()
-for(i in 1:nrow(b_allp.res)){
-  if(!is.na(b_allp.res$qval_individual[i]) && b_allp.res$qval_individual[i] < 0.1){
-    b_sigp.res <- rbind(b_sigp.res, b_allp.res[i,])
+# Save the significant results that correspond to taxa found in the mycobloom community #
+b_mycs.res <- c()
+for(i in 1:nrow(b_sigs.res)){
+  if(b_sigs.res$feature[i] %in% myc.name){
+    b_mycs.res <- rbind(b_mycs.res, b_sigs.res[i,])
   }
 }
 
 ### Site C ###
 # Calculate differential abundance using the mixed linear model with treatment as a fixed effect and site as a random effect #
-c.maas <- maaslin3(input_data = nomy$otu,
+c.maas <- Maaslin2(input_data = nomy$otu,
                    input_metadata = nomy$met,
                    output = './maas/c.maas',
-                   formula = '~ Group',
+                   fixed_effects = "Both",
                    normalization = "TSS",
                    transform = "LOG",
                    correction = "BH",
-                   reference = c('Group,CC'))
+                   reference = c('Both,CC'),
+                   plot_scatter = FALSE,
+                   plot_heatmap = FALSE,)
+
 # Save the results tables for abundance and prevalence, respectively #  
-c_abun.res <- c.maas$fit_data_abundance$results
-c_prev.res <- c.maas$fit_data_prevalence$results
+c_maas.res <- c.maas$results
 
-## Abundance Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-c_alla.res <- c()
-for(i in 1:nrow(c_abun.res)){
-  if(c_abun.res$value[i] == "CHI" | c_abun.res$value[i] == "CLO"){
-    c_alla.res <- rbind(c_alla.res, c_abun.res[i,])
+# Save only the results of with values corresponding to communities found within Site A #
+c_comp.res <- c()
+for(i in 1:nrow(c_maas.res)){
+  if(c_maas.res$value[i] == "CHI" | c_maas.res$value[i] == "CLO"){
+    c_comp.res <- rbind(c_comp.res, c_maas.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-c_siga.res <- c()
-for(i in 1:nrow(c_alla.res)){
-  if(!is.na(c_alla.res$qval_individual[i]) && c_alla.res$qval_individual[i] < 0.1){
-    c_siga.res <- rbind(c_siga.res, c_alla.res[i,])
+# Save only the significant results #
+c_sigs.res <- c()
+for(i in 1:nrow(c_comp.res)){
+  if(c_comp.res$qval[i] < 0.05){
+    c_sigs.res <- rbind(c_sigs.res, c_comp.res[i,])
   }
 }
 
-## Prevalence Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-c_allp.res <- c()
-for(i in 1:nrow(c_prev.res)){
-  if(c_prev.res$value[i] == "CHI" | c_prev.res$value[i] == "CLO"){
-    c_allp.res <- rbind(c_allp.res, c_prev.res[i,])
-  }
-}
-
-# Save all of the significant results to a new data frame #
-c_sigp.res <- c()
-for(i in 1:nrow(c_allp.res)){
-  if(!is.na(c_allp.res$qval_individual[i]) && c_allp.res$qval_individual[i] < 0.1){
-    c_sigp.res <- rbind(c_sigp.res, c_allp.res[i,])
+# Save the significant results that correspond to taxa found in the mycobloom community #
+c_mycs.res <- c()
+for(i in 1:nrow(c_sigs.res)){
+  if(c_sigs.res$feature[i] %in% myc.name){
+    c_mycs.res <- rbind(c_mycs.res, c_sigs.res[i,])
   }
 }
 
 ### Site D ###
 # Calculate differential abundance using the mixed linear model with treatment as a fixed effect and site as a random effect #
-d.maas <- maaslin3(input_data = nomy$otu,
+d.maas <- Maaslin2(input_data = nomy$otu,
                    input_metadata = nomy$met,
                    output = './maas/d.maas',
-                   formula = '~ Group',
+                   fixed_effects = "Both",
                    normalization = "TSS",
                    transform = "LOG",
                    correction = "BH",
-                   reference = c('Group,DC'))
+                   reference = c('Both,DC'),
+                   plot_scatter = FALSE,
+                   plot_heatmap = FALSE,)
+
 # Save the results tables for abundance and prevalence, respectively #  
-d_abun.res <- d.maas$fit_data_abundance$results
-d_prev.res <- d.maas$fit_data_prevalence$results
+d_maas.res <- d.maas$results
 
-## Abundance Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-d_alla.res <- c()
-for(i in 1:nrow(d_abun.res)){
-  if(d_abun.res$value[i] == "DHI" | d_abun.res$value[i] == "DLO"){
-    d_alla.res <- rbind(d_alla.res, d_abun.res[i,])
+# Save only the results of with values corresponding to communities found within Site A #
+d_comp.res <- c()
+for(i in 1:nrow(d_maas.res)){
+  if(d_maas.res$value[i] == "DHI" | d_maas.res$value[i] == "DLO"){
+    d_comp.res <- rbind(d_comp.res, d_maas.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-d_siga.res <- c()
-for(i in 1:nrow(d_alla.res)){
-  if(!is.na(d_alla.res$qval_individual[i]) && d_alla.res$qval_individual[i] < 0.1){
-    d_siga.res <- rbind(d_siga.res, d_alla.res[i,])
+# Save only the significant results #
+d_sigs.res <- c()
+for(i in 1:nrow(d_comp.res)){
+  if(d_comp.res$qval[i] < 0.05){
+    d_sigs.res <- rbind(d_sigs.res, d_comp.res[i,])
   }
 }
 
-## Prevalence Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-d_allp.res <- c()
-for(i in 1:nrow(d_prev.res)){
-  if(d_prev.res$value[i] == "DHI" | d_prev.res$value[i] == "DLO"){
-    d_allp.res <- rbind(d_allp.res, d_prev.res[i,])
-  }
-}
-
-# Save all of the significant results to a new data frame #
-d_sigp.res <- c()
-for(i in 1:nrow(d_allp.res)){
-  if(!is.na(d_allp.res$qval_individual[i]) && d_allp.res$qval_individual[i] < 0.1){
-    d_sigp.res <- rbind(d_sigp.res, d_allp.res[i,])
+# Save the significant results that correspond to taxa found in the mycobloom community #
+d_mycs.res <- c()
+for(i in 1:nrow(d_sigs.res)){
+  if(d_sigs.res$feature[i] %in% myc.name){
+    d_mycs.res <- rbind(d_mycs.res, d_sigs.res[i,])
   }
 }
 
 ### Site E ###
 # Calculate differential abundance using the mixed linear model with treatment as a fixed effect and site as a random effect #
-e.maas <- maaslin3(input_data = nomy$otu,
+e.maas <- Maaslin2(input_data = nomy$otu,
                    input_metadata = nomy$met,
                    output = './maas/e.maas',
-                   formula = '~ Group',
+                   fixed_effects = "Both",
                    normalization = "TSS",
                    transform = "LOG",
                    correction = "BH",
-                   reference = c('Group,EC'))
+                   reference = c('Both,EC'),
+                   plot_scatter = FALSE,
+                   plot_heatmap = FALSE,)
+
 # Save the results tables for abundance and prevalence, respectively #  
-e_abun.res <- e.maas$fit_data_abundance$results
-e_prev.res <- e.maas$fit_data_prevalence$results
+e_maas.res <- e.maas$results
 
-## Abundance Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-e_alla.res <- c()
-for(i in 1:nrow(e_abun.res)){
-  if(e_abun.res$value[i] == "EHI" | e_abun.res$value[i] == "ELO"){
-    e_alla.res <- rbind(e_alla.res, e_abun.res[i,])
+# Save only the results of with values corresponding to communities found within Site A #
+e_comp.res <- c()
+for(i in 1:nrow(e_maas.res)){
+  if(e_maas.res$value[i] == "EHI" | e_maas.res$value[i] == "ELO"){
+    e_comp.res <- rbind(e_comp.res, e_maas.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-e_siga.res <- c()
-for(i in 1:nrow(e_alla.res)){
-  if(!is.na(e_alla.res$qval_individual[i]) && e_alla.res$qval_individual[i] < 0.1){
-    e_siga.res <- rbind(e_siga.res, e_alla.res[i,])
+# Save only the significant results #
+e_sigs.res <- c()
+for(i in 1:nrow(e_comp.res)){
+  if(e_comp.res$qval[i] < 0.05){
+    e_sigs.res <- rbind(e_sigs.res, e_comp.res[i,])
   }
 }
 
-## Prevalence Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-e_allp.res <- c()
-for(i in 1:nrow(e_prev.res)){
-  if(e_prev.res$value[i] == "EHI" | e_prev.res$value[i] == "ELO"){
-    e_allp.res <- rbind(e_allp.res, e_prev.res[i,])
-  }
-}
-
-# Save all of the significant results to a new data frame #
-e_sigp.res <- c()
-for(i in 1:nrow(e_allp.res)){
-  if(!is.na(e_allp.res$qval_individual[i]) && e_allp.res$qval_individual[i] < 0.1){
-    e_sigp.res <- rbind(e_sigp.res, e_allp.res[i,])
+# Save the significant results that correspond to taxa found in the mycobloom community #
+e_mycs.res <- c()
+for(i in 1:nrow(e_sigs.res)){
+  if(e_sigs.res$feature[i] %in% myc.name){
+    e_mycs.res <- rbind(e_mycs.res, e_sigs.res[i,])
   }
 }
 
 ### Site F ###
 # Calculate differential abundance using the mixed linear model with treatment as a fixed effect and site as a random effect #
-f.maas <- maaslin3(input_data = nomy$otu,
+f.maas <- Maaslin2(input_data = nomy$otu,
                    input_metadata = nomy$met,
                    output = './maas/f.maas',
-                   formula = '~ Group',
+                   fixed_effects = "Both",
                    normalization = "TSS",
                    transform = "LOG",
                    correction = "BH",
-                   reference = c('Group,FC'))
+                   reference = c('Both,FC'),
+                   plot_scatter = FALSE,
+                   plot_heatmap = FALSE,)
+
 # Save the results tables for abundance and prevalence, respectively #  
-f_abun.res <- f.maas$fit_data_abundance$results
-f_prev.res <- f.maas$fit_data_prevalence$results
+f_maas.res <- f.maas$results
 
-## Abundance Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-f_alla.res <- c()
-for(i in 1:nrow(f_abun.res)){
-  if(f_abun.res$value[i] == "FHI" | f_abun.res$value[i] == "FLO"){
-    f_alla.res <- rbind(f_alla.res, f_abun.res[i,])
+# Save only the results of with values corresponding to communities found within Site A #
+f_comp.res <- c()
+for(i in 1:nrow(f_maas.res)){
+  if(f_maas.res$value[i] == "FHI" | f_maas.res$value[i] == "FLO"){
+    f_comp.res <- rbind(f_comp.res, f_maas.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-f_siga.res <- c()
-for(i in 1:nrow(f_alla.res)){
-  if(!is.na(f_alla.res$qval_individual[i]) && f_alla.res$qval_individual[i] < 0.1){
-    f_siga.res <- rbind(f_siga.res, f_alla.res[i,])
+# Save only the significant results #
+f_sigs.res <- c()
+for(i in 1:nrow(f_comp.res)){
+  if(f_comp.res$qval[i] < 0.05){
+    f_sigs.res <- rbind(f_sigs.res, f_comp.res[i,])
   }
 }
 
-## Prevalence Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-f_allp.res <- c()
-for(i in 1:nrow(f_prev.res)){
-  if(f_prev.res$value[i] == "FHI" | f_prev.res$value[i] == "FLO"){
-    f_allp.res <- rbind(f_allp.res, f_prev.res[i,])
+# Save the significant results that correspond to taxa found in the mycobloom community #
+f_mycs.res <- c()
+for(i in 1:nrow(f_sigs.res)){
+  if(f_sigs.res$feature[i] %in% myc.name){
+    f_mycs.res <- rbind(f_mycs.res, f_sigs.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-f_sigp.res <- c()
-for(i in 1:nrow(f_allp.res)){
-  if(!is.na(f_allp.res$qval_individual[i]) && f_allp.res$qval_individual[i] < 0.1){
-    f_sigp.res <- rbind(f_sigp.res, f_allp.res[i,])
-  }
-}
 
 ### Site G ###
 # Calculate differential abundance using the mixed linear model with treatment as a fixed effect and site as a random effect #
-g.maas <- maaslin3(input_data = nomy$otu,
+g.maas <- Maaslin2(input_data = nomy$otu,
                    input_metadata = nomy$met,
                    output = './maas/g.maas',
-                   formula = '~ Group',
+                   fixed_effects = "Both",
                    normalization = "TSS",
                    transform = "LOG",
                    correction = "BH",
-                   reference = c('Group,GC'))
+                   reference = c('Both,GC'),
+                   plot_scatter = FALSE,
+                   plot_heatmap = FALSE,)
+
 # Save the results tables for abundance and prevalence, respectively #  
-g_abun.res <- g.maas$fit_data_abundance$results
-g_prev.res <- g.maas$fit_data_prevalence$results
+g_maas.res <- g.maas$results
 
-## Abundance Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-g_alla.res <- c()
-for(i in 1:nrow(g_abun.res)){
-  if(g_abun.res$value[i] == "GHI" | g_abun.res$value[i] == "GLO"){
-    g_alla.res <- rbind(g_alla.res, g_abun.res[i,])
+# Save only the results of with values corresponding to communities found within Site A #
+g_comp.res <- c()
+for(i in 1:nrow(g_maas.res)){
+  if(g_maas.res$value[i] == "GHI" | g_maas.res$value[i] == "GLO"){
+    g_comp.res <- rbind(g_comp.res, g_maas.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-g_siga.res <- c()
-for(i in 1:nrow(g_alla.res)){
-  if(!is.na(g_alla.res$qval_individual[i]) && g_alla.res$qval_individual[i] < 0.1){
-    g_siga.res <- rbind(g_siga.res, g_alla.res[i,])
+# Save only the significant results #
+g_sigs.res <- c()
+for(i in 1:nrow(g_comp.res)){
+  if(g_comp.res$qval[i] < 0.05){
+    g_sigs.res <- rbind(g_sigs.res, g_comp.res[i,])
   }
 }
 
-## Prevalence Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-g_allp.res <- c()
-for(i in 1:nrow(g_prev.res)){
-  if(g_prev.res$value[i] == "GHI" | g_prev.res$value[i] == "GLO"){
-    g_allp.res <- rbind(g_allp.res, g_prev.res[i,])
-  }
-}
-
-# Save all of the significant results to a new data frame #
-g_sigp.res <- c()
-for(i in 1:nrow(g_allp.res)){
-  if(!is.na(g_allp.res$qval_individual[i]) && g_allp.res$qval_individual[i] < 0.1){
-    g_sigp.res <- rbind(g_sigp.res, g_allp.res[i,])
+# Save the significant results that correspond to taxa found in the mycobloom community #
+g_mycs.res <- c()
+for(i in 1:nrow(g_sigs.res)){
+  if(g_sigs.res$feature[i] %in% myc.name){
+    g_mycs.res <- rbind(g_mycs.res, g_sigs.res[i,])
   }
 }
 
 ### Site H ###
 # Calculate differential abundance using the mixed linear model with treatment as a fixed effect and site as a random effect #
-h.maas <- maaslin3(input_data = nomy$otu,
+h.maas <- Maaslin2(input_data = nomy$otu,
                    input_metadata = nomy$met,
                    output = './maas/h.maas',
-                   formula = '~ Group',
+                   fixed_effects = "Both",
                    normalization = "TSS",
                    transform = "LOG",
                    correction = "BH",
-                   reference = c('Group,HC'))
+                   reference = c('Both,HC'),
+                   plot_scatter = FALSE,
+                   plot_heatmap = FALSE,)
+
 # Save the results tables for abundance and prevalence, respectively #  
-h_abun.res <- h.maas$fit_data_abundance$results
-h_prev.res <- h.maas$fit_data_prevalence$results
+h_maas.res <- h.maas$results
 
-## Abundance Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-h_alla.res <- c()
-for(i in 1:nrow(h_abun.res)){
-  if(h_abun.res$value[i] == "HHI" | h_abun.res$value[i] == "HLO"){
-    h_alla.res <- rbind(h_alla.res, h_abun.res[i,])
+# Save only the results of with values corresponding to communities found within Site A #
+h_comp.res <- c()
+for(i in 1:nrow(h_maas.res)){
+  if(h_maas.res$value[i] == "HHI" | h_maas.res$value[i] == "HLO"){
+    h_comp.res <- rbind(h_comp.res, h_maas.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-h_siga.res <- c()
-for(i in 1:nrow(h_alla.res)){
-  if(!is.na(h_alla.res$qval_individual[i]) && h_alla.res$qval_individual[i] < 0.1){
-    h_siga.res <- rbind(h_siga.res, h_alla.res[i,])
+# Save only the significant results #
+h_sigs.res <- c()
+for(i in 1:nrow(h_comp.res)){
+  if(h_comp.res$qval[i] < 0.05){
+    h_sigs.res <- rbind(h_sigs.res, h_comp.res[i,])
   }
 }
 
-## Prevalence Associations ##
-# Save only the results of with values corresponding to communities found within Site B #
-h_allp.res <- c()
-for(i in 1:nrow(h_prev.res)){
-  if(h_prev.res$value[i] == "HHI" | h_prev.res$value[i] == "HLO"){
-    h_allp.res <- rbind(h_allp.res, h_prev.res[i,])
+# Save the significant results that correspond to taxa found in the mycobloom community #
+h_mycs.res <- c()
+for(i in 1:nrow(h_sigs.res)){
+  if(h_sigs.res$feature[i] %in% myc.name){
+    h_mycs.res <- rbind(h_mycs.res, h_sigs.res[i,])
   }
 }
 
-# Save all of the significant results to a new data frame #
-h_sigp.res <- c()
-for(i in 1:nrow(h_allp.res)){
-  if(!is.na(h_allp.res$qval_individual[i]) && h_allp.res$qval_individual[i] < 0.1){
-    h_sigp.res <- rbind(h_sigp.res, h_allp.res[i,])
+
+# All Samples Across Treatments Test #
+all.maas <- Maaslin2(input_data = nomy$otu,
+                               input_metadata = nomy$met,
+                               output = './maas/all.maas',
+                               fixed_effects = "Treats",
+                               random_effects = "Sites",
+                               normalization = "TSS",
+                               transform = "LOG",
+                               correction = "BH",
+                               reference = c('Treats,Control'),
+                               plot_scatter = FALSE,
+                               plot_heatmap = FALSE,) 
+
+# Save the results tables for abundance and prevalence, respectively #  
+all_maas.res <- all.maas$results
+
+# Change the names such that they match the original ASV names #
+all_maas.res$feature <- sub("^(ASV[0-9]+).([^_]+).$", "\\1(\\2)", all_maas.res$feature)
+
+# Save only the significant results #
+all_sigs.res <- c()
+for(i in 1:nrow(all_maas.res)){
+  if(all_maas.res$qval[i] < 0.05){
+    all_sigs.res <- rbind(all_sigs.res, all_maas.res[i,])
   }
 }
+
+# Save the significant results that correspond to taxa found in the mycobloom community #
+all_mycs.res <- c()
+for(i in 1:nrow(all_sigs.res)){
+  if(all_sigs.res$feature[i] %in% myc.name){
+    all_mycs.res <- rbind(all_mycs.res, all_sigs.res[i,])
+  }
+}
+
+# Make sepearte data.frames for comparisons between high and low communities #
+high_maas.res <- filter(all_maas.res, value == "High")
+low_maas.res <- filter(all_maas.res, value == "Low")
+
+# take the negative log10 of each qval #
+high_maas.res$`-log10(qval)` <- sapply(high_maas.res$qval, function(x) -log(x, base = 10))
+low_maas.res$`-log10(qval)` <- sapply(low_maas.res$qval, function(x) -log(x, base = 10))
+
+# Show the fold change for each ASV by Treatment comparison #
+for(i in 1:nrow(high_maas.res)){
+  if(high_maas.res$coef[i] >= 0){
+    high_maas.res$back[i] <- exp(high_maas.res$coef[i])
+  } else{
+    high_maas.res$back[i] <- -1 * exp(-1 * high_maas.res$coef[i]) 
+  }
+}
+
+for(i in 1:nrow(low_maas.res)){
+  if(low_maas.res$coef[i] >= 0){
+    low_maas.res$back[i] <- exp(low_maas.res$coef[i])
+  } else{
+    low_maas.res$back[i] <- -1 * exp(-1 * low_maas.res$coef[i]) 
+  }
+}
+
+# Add annotations for colors #
+for(i in 1:nrow(high_maas.res)){
+  if(high_maas.res$qval[i] < 0.05 & high_maas.res$coef[i] > 0){
+    high_maas.res$Direction[i] <- 'High'
+  } else if(high_maas.res$qval[i] < 0.05 & high_maas.res$coef[i] < 0){
+    high_maas.res$Direction[i] <- 'Control'
+  } else{
+    high_maas.res$Direction[i] <- 'Neither'
+  }
+}
+
+for(i in 1:nrow(low_maas.res)){
+  if(low_maas.res$qval[i] < 0.05 & low_maas.res$coef[i] > 0){
+    low_maas.res$Direction[i] <- 'Low'
+  } else if(low_maas.res$qval[i] < 0.05 & low_maas.res$coef[i] < 0){
+    low_maas.res$Direction[i] <- 'Control'
+  } else{
+    low_maas.res$Direction[i] <- 'Neither'
+  }
+}
+
+# Add colors for samples that only correspond to taxa from the mycobloom community #
+for(i in 1:nrow(high_maas.res)){
+  if(high_maas.res$feature[i] %in% myc.name){
+    high_maas.res$Myc[i] <- 'myc'
+  }else{
+    high_maas.res$Myc[i] <- 'not'
+  }
+}
+
+for(i in 1:nrow(low_maas.res)){
+  if(low_maas.res$feature[i] %in% myc.name){
+    low_maas.res$Myc[i] <- 'myc'
+  }else{
+    low_maas.res$Myc[i] <- 'not'
+  }
+}
+
+# Add final annotations so that only significant mycobloom taxa are represented #
+for(i in 1:nrow(high_maas.res)){
+  if(high_maas.res$Direction[i] == 'High' & high_maas.res$Myc[i] == 'myc'){
+    high_maas.res$sigmyc[i] <- 'yes'
+    high_maas.res$feats[i] <- high_maas.res$feature[i]
+  }else {
+    high_maas.res$sigmyc[i] <- 'no'
+    high_maas.res$feats[i] <- ''
+  }
+}
+
+# Add final annotations so that only significant mycobloom taxa are represented #
+for(i in 1:nrow(low_maas.res)){
+  if(low_maas.res$Direction[i] == 'Low' & low_maas.res$Myc[i] == 'myc'){
+    low_maas.res$sigmyc[i] <- 'yes'
+    low_maas.res$feats[i] <- low_maas.res$feature[i]
+  }else {
+    low_maas.res$sigmyc[i] <- 'no'
+    low_maas.res$feats[i] <- ''
+  }
+}
+
+high_maas.res$sigmyc <- factor(high_maas.res$sigmyc, levels = c('yes', 'no'))
+low_maas.res$sigmyc <- factor(low_maas.res$sigmyc, levels = c('yes', 'no'))
+
+# Make a volcano plot #
+if(!requireNamespace("ggrepel")) install.packages("ggrepel")
+library(ggrepel); packageVersion("ggrepel")
+if(!requireNamespace('ggtext')) install.packages('ggtext')
+library(ggtext); packageVersion('ggtext')
+
+high.volc <- ggplot(high_maas.res, aes(x = back, y = `-log10(qval)`, color = sigmyc, label = feats)) +
+  geom_hline(yintercept = -log(0.05, 10), col = 'gray', linewidth = unit(1, 'mm'), linetype = 'dashed') +
+  geom_vline(xintercept = 0, col = 'gray', linewidth = unit(1,'mm'), linetype = 'dashed') +
+  geom_point(size = 4) +
+  scale_color_manual(labels = c('myc', 'not'), values = c('red', 'gray')) +
+  theme_prism() +
+  geom_label_repel(size = 5, family = "Liberation Sans", fontface = "bold", min.segment.length = unit(0, 'lines'), box.padding = unit(0.5, 'lines')) +
+  scale_x_continuous(name = 'log<sub>2</sub>-fold change', breaks = seq(-40,40,10), limits = c(-40, 41)) +
+  scale_y_continuous(breaks = seq(0,3.5,0.5), expand = expansion(add = c(0,0)), limits = c(0,3.5)) +
+  theme(legend.position = 'none',
+        axis.title.x = ggtext::element_markdown(family = 'Liberation Sans', face = 'bold', vjust = 0.1, size = 24),
+        axis.title.y = ggtext::element_markdown(family = 'Liberation Sans', face = 'bold', vjust = 0.1, size = 24),
+        axis.text.x = element_text(size = 14, family = 'Liberation Sans'),
+        axis.text.y = element_text(size = 14, family = 'Liberation Sans'))
+                    
+low.volc <- ggplot(low_maas.res, aes(x = back, y = `-log10(qval)`, color = sigmyc, label = feats)) +
+  geom_hline(yintercept = -log(0.05, 10), col = 'gray', linewidth = unit(1, 'mm'), linetype = 'dashed') +
+  geom_vline(xintercept = 0, col = 'gray', linewidth = unit(1,'mm'), linetype = 'dashed') +
+  geom_point(size = 4) +
+  scale_color_manual(, values = c('gray', 'red')) +
+  theme_prism() +
+  geom_label_repel(size = 5, family = "Liberation Sans", fontface = "bold", min.segment.length = unit(0, 'lines'), box.padding = unit(0.5, 'lines')) +
+  scale_x_continuous(name = 'log<sub>2</sub>-fold change', breaks = seq(-20,20,10), limits = c(-21, 21)) +
+  scale_y_continuous(breaks = seq(0,2,0.5), expand = expansion(add = c(0,0)), limits = c(0,2.1)) +
+  theme(legend.position = 'none',
+        axis.title.x = ggtext::element_markdown(family = 'Liberation Sans', face = 'bold', vjust = 0.1, size = 24),
+        axis.title.y = ggtext::element_markdown(family = 'Liberation Sans', face = 'bold', vjust = 0.1, size = 24),
+        axis.text.x = element_text(size = 14, family = 'Liberation Sans'),
+        axis.text.y = element_text(size = 14, family = 'Liberation Sans'))
 
 save.image("./ksp_amf.RData")
+
+#### Correlation with AboveGround Diversity ####
+# Load in the aboveground diversity data #
+raw_above.df <- read.csv2('./KSP24_count.csv', sep = ',')
+raw_above.df <- t(raw_above.df)
+colnames(raw_above.df) <- raw_above.df[1,]
+
+# Replace the empty entries with 0s #
+for(i in 1:nrow(raw_above.df)){
+  for(j in 1:ncol(raw_above.df)){
+    if(raw_above.df[i,j] == ""){
+      raw_above.df[i,j] = 0 
+    }
+  }
+}
+
+filt_above.df <- as.data.frame(raw_above.df[-1,])
+
+# Make the counts numeric #
+filt_above.df[,5:ncol(filt_above.df)] <- lapply(filt_above.df[,5:ncol(filt_above.df)], as.numeric)
+
+# Order the data.frame by Site #
+filt_above.df <- filt_above.df[sort(rownames(filt_above.df), decreasing = FALSE), ]
+
+# Make an "OTU" and "MET" table of the observations #
+above.otu <- filt_above.df[,5:ncol(filt_above.df)]
+above.met <- filt_above.df[,1:4]
+
+above.dist <- vegdist(above.otu, method = 'bray')
+above.perm <- adonis2(above.dist ~ Plot*Treatment, data = above.met, by = 'terms')
 
 # This just outputs the final time in which the Rscript finishes running #
 cat("\n## Script finished at", Sys.time(), "\n")
