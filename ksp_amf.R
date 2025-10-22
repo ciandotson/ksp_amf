@@ -1,7 +1,7 @@
 # This is an R script on how to use the dada2 pipeline to denoise Illumina amplicon sequencing data # 
 # into analyzed sequence variants (ASVs). This tutorial is based on the published #
 # tutorial (https://benjjneb.github.io/dada2/tutorial_1_8.html) and is adapted to fit # 
-# the Kankakee Sand Prairie fungal LSU sequencing data #
+# the Kankakee Sand Prairie fungal SSU sequencing data #
 
 # After cloning this repository, the script will automatically change the working directory to the #
 # cloned repository as long as it is cloned directly into your home directory #
