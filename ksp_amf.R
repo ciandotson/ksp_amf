@@ -2200,7 +2200,7 @@ low.volc <- ggplot(low_maas.res, aes(x = back, y = `-log10(qval)`, color = sigmy
 
 save.image("./ksp_amf.RData")
 
-#### Correlation with AboveGround Diversity ####
+#### Correlation with Aboveground Diversity ####
 # Load in the aboveground diversity data #
 raw_above.df <- read.csv2('./KSP24_count.csv', sep = ',')
 raw_above.df <- t(raw_above.df)
@@ -2228,7 +2228,51 @@ above.otu <- filt_above.df[,5:ncol(filt_above.df)]
 above.met <- filt_above.df[,1:4]
 
 above.dist <- vegdist(above.otu, method = 'bray')
-above.perm <- adonis2(above.dist ~ Plot*Treatment, data = above.met, by = 'terms')
+above.dist <- as.data.frame(as.matrix(above.dist))
+below.dist <- vegdist(t(final_ksp$otu), method = 'bray')
+below.dist <- as.data.frame(as.matrix(below.dist))
+below.dist <- below.dist[-73,-73]
+
+dist_avg <- function(dist, lets, numbs) {
+  # Function that takes the within group average of a distance matrix of each group specified by their sample names and creates a new distance matrix #  
+  within <- list()
+  between <- list()
+  groups <- c()
+  final <- matrix(nrow = nrow(dist), ncol = ncol(dist))
+  for(i in LETTERS[1:lets]){
+    for(j in numbs){
+      unq <- paste0(i,j)
+      groups <- c(groups, paste0(i,j))
+      within.dist <- dist[grep(paste0(i,j,'.*'), rownames(dist), value = TRUE),grep(paste0(i,j,'.*'), colnames(dist), value = TRUE)]
+      if(length(rownames(within.dist)) > 1){
+        within[[paste0(i,j)]] <- mean(as.dist(within.dist))
+      } else{
+        within[[paste0(i,j)]] <- NA
+      }
+    }
+  }
+  final <- matrix(nrow = length(groups), ncol = length(groups))
+  final <- as.data.frame(final)
+  rownames(final) <- groups; colnames(final) <- groups
+  for(i in groups){
+    final[i,i] <- within[[i]]
+  }
+  group_comb <- combn(groups, 2)
+  for(i in 1:ncol(group_comb)){
+    g1 <- group_comb[1,i]
+    g2 <- group_comb[2,i]
+    between.dist <- dist[grep(paste0(g1, '.*'), rownames(dist), value = TRUE), grep(paste0(g2, '.*'), colnames(dist), value = TRUE)]
+    final[g1,g2] <- mean(as.dist(between.dist))
+  }
+  return(t(final))
+}
+
+final_below.dist <- dist_avg(below.dist, 8, c("C", "LO", "HI"))
+final_above.dist <- dist_avg(above.dist, 8, c(".C", ".low", ".high"))
+
+rownames(final_above.dist) <- rownames(final_below.dist); colnames(final_above.dist) <- colnames(final_below.dist)
+
+beta.man <- mantel(final_below.dist, final_above.dist, method = "pearson", permutations = 9999)
 
 # This just outputs the final time in which the Rscript finishes running #
 cat("\n## Script finished at", Sys.time(), "\n")
