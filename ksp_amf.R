@@ -403,7 +403,7 @@ for(i in LETTERS[1:8]){
 
 # Save only the control samples that are NOT found in the list #
 filt_ksp.ps <- subset_samples(fun_ksp.ps, !sample_names(fun_ksp.ps) %in% rownames(remn.met))
-filt_ksp.ps <- subset_taxa(filt_ksp.ps, taxa_sums(final_ksp.ps) > 0)
+filt_ksp.ps <- subset_taxa(filt_ksp.ps, taxa_sums(filt_ksp.ps) > 0)
 
 ## One last filtering step: only save ASVs with at least 0.1% prevalence within each group of samples #
 # Subset the data by Site (8 phyloseq) objects #
