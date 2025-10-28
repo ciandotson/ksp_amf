@@ -964,8 +964,6 @@ resave(alpha.plot, file = "./abridged.RData")
 
 #### Beta Diversity ####
 ### Make an upset plot to determine whether to use weighted or unweighted unifrac ###
-if(!requireNamespace("ComplexUpset")) install.packages("ComplexUpset")
-library(ComplexUpset); packageVersion("ComplexUpset")
 
 ## Subset the whole phyloseq object by treatments and filter to only contain taxa found in the MycoBloom ##
 # Control #
@@ -982,7 +980,6 @@ hig.name <- taxa_names(hig.ps)
 low.ps <- subset_samples(final_ksp.ps, Treatment == "Low")
 low.ps <- subset_taxa(low.ps, taxa_sums(low.ps) > 0)
 low.name <- taxa_names(low.ps)
-
 
 all.usdf <- list(Control = con.name, High = hig.name, Low = low.name)
 all.asv <- data.frame(ASV = taxa_names(final_ksp.ps))
@@ -2264,7 +2261,15 @@ dist_avg <- function(dist, lets, numbs) {
     between.dist <- dist[grep(paste0(g1, '.*'), rownames(dist), value = TRUE), grep(paste0(g2, '.*'), colnames(dist), value = TRUE)]
     final[g1,g2] <- mean(as.dist(between.dist))
   }
-  return(t(final))
+  final <- t(final)
+  for(i in 1:nrow(final)){
+    for(j in 1:ncol(final)){
+      if(is.na(final[i,j])){
+        final[i,j] <- final[j,i]
+      }
+    }
+  }
+  return(final)
 }
 
 final_below.dist <- dist_avg(below.dist, 8, c("C", "LO", "HI"))
@@ -2272,7 +2277,89 @@ final_above.dist <- dist_avg(above.dist, 8, c(".C", ".low", ".high"))
 
 rownames(final_above.dist) <- rownames(final_below.dist); colnames(final_above.dist) <- colnames(final_below.dist)
 
-beta.man <- mantel(final_below.dist, final_above.dist, method = "pearson", permutations = 9999)
+beta.man <- mantel(as.matrix(final_above.dist), as.matrix(final_below.dist), method = 'spearman', permutations = 9999)
+
+data.framify <- function(mat_df1, mat_df2){
+  # function that converts a data.frame of a distance matrix into a dataframe in which all values are saved as one column of a data.frame #
+  joined <- matrix(nrow = 1, ncol = 7)
+  joined <- as.data.frame(joined)
+  rowcount <- 1
+  colnames(joined) <- c('Above', 'Below', 'Rowname', 'Colname', 'Comparison', 'Thorough', 'Di')
+  for(i in 1:nrow(mat_df1)){
+    for(j in 1:ncol(mat_df1)){
+      if(!is.na(mat_df1[i,j])){
+        joined[rowcount,1] <- mat_df1[i,j]
+        joined[rowcount,2] <- mat_df2[i,j]
+        joined[rowcount,3] <- rownames(mat_df1)[i]
+        joined[rowcount,4] <- colnames(mat_df1)[j]
+        if(rownames(mat_df1)[i] == colnames(mat_df1)[j]){
+          joined[rowcount,5] = 'Within'
+        } else{
+          joined[rowcount,5] = 'Between'
+        }
+        joined[rowcount,6] <- paste0(substr(joined[rowcount,3],2,2), '-', substr(joined[rowcount,4],2,2))
+        rownames(joined)[rowcount] <- paste0(joined[rowcount,3], '-', joined[rowcount,4])
+        if(substr(joined[rowcount,3], 1,1) == substr(joined[rowcount,4],1,1) & substr(joined[rowcount,3],2,2) == substr(joined[rowcount,4],2,2)){
+          joined[rowcount,7] <- 'WSWT'
+        } else if(substr(joined[rowcount,3], 1,1) != substr(joined[rowcount,4],1,1) & substr(joined[rowcount,3],2,2) == substr(joined[rowcount,4],2,2)) {
+          joined[rowcount,7] <- 'ASWT'
+        } else if(substr(joined[rowcount,3], 1,1) == substr(joined[rowcount,4],1,1) & substr(joined[rowcount,3],2,2) != substr(joined[rowcount,4],2,2)){
+          joined[rowcount,7] <- 'WSAT'
+        } else{
+          joined[rowcount,7] <- 'ASAT'
+        }
+        rowcount <- rowcount + 1
+      }
+    }
+  }
+  return(joined)
+}
+
+beta.df <- data.framify(final_above.dist, final_below.dist)
+
+within_site <- function(df){
+  # function that only saves the pairwise comparisons within site #
+  within <- matrix(nrow = 1, ncol = 7)
+  within = as.data.frame(within)
+  colnames(within) <- colnames(df)
+  rowcount <- 1
+  for(i in 1:nrow(df)){
+    if(substr(df$Rowname[i],1,1) == substr(df$Colname[i],1,1)){
+      within[rowcount,] <- df[i,]
+      rownames(within)[rowcount] <- paste0(df$Rowname[i], '-', df$Colname[i])
+      rowcount <- rowcount + 1
+    }
+  }
+  return(within)
+}
+
+beta_within.df <- within_site(beta.df)
+
+beta.fit <- lm(Above~Below, beta.df)
+beta.aov <- Anova(beta.fit, type = 2)
+
+beta.df$Di <- factor(beta.df$Di, levels = c('WSWT', 'WSAT', 'ASWT', 'ASAT'))
+
+beta_man.plot <- ggplot(beta.df, aes(x = Below, y = Above, color = Di)) +
+  geom_abline(intercept = coef(beta.fit)[1],
+              slope = coef(beta.fit)[2],
+              color = 'black') +
+  geom_point(size = 5) +
+  theme_prism() +
+  scale_y_continuous(name = "Aboveground Biodiversity Dissimilarity (Bray-Curtis)", breaks = seq(0.2,1,0.2), limits = c(0.2,1)) +
+  scale_x_continuous(name = "Belowground Biodiversity Dissimilarity (Bray-Curtis)", breaks = seq(0.2,1,0.2), limits = c(0.3,1)) +
+  scale_color_manual(name = "Site and Treatment Comparison", labels = c("Within Site, Within Treatment", "Within Site, Across Treatment", "Across Site, Within Treatment", "Across Site, Across Treatment"),values = c("#1F78B4","#FDBF6F","#6A3D9A", "#B15928")) +
+  annotate("richtext", x = 0.65, y = 0.2,
+           label = paste0("Mantel r = ", round(beta.man$statistic, 3), "; <em>p</em> = ", round(beta.man$signif, 3)),
+           size = 14, fontface = 'bold', family = 'Liberation Sans') +
+  theme(legend.text = element_text(size = 16, color = 'black', face = 'bold', family = 'Liberation Sans'),
+        legend.title = element_text(size = 20, color = 'black', face = 'bold', family = 'Liberation Sans'),
+        legend.key.spacing.y = unit(3, 'mm'),
+        legend.position = "inside",
+        legend.position.inside = c(0.15,0.8),
+        axis.title = element_text(size = 20),
+        axis.text = element_text(size = 16),
+        legend.background = element_rect(color = 'black'))
 
 # This just outputs the final time in which the Rscript finishes running #
 cat("\n## Script finished at", Sys.time(), "\n")
