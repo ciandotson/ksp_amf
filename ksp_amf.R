@@ -996,7 +996,7 @@ for(i in 2:4){
 if(!requireNamespace('UpSetR')) install.packages('UpSetR')
 library(UpSetR); packageVersion('UpSetR')
 
-upset(all.asv, order.by = 'freq')
+all.set <- upset(all.asv, order.by = 'freq')
 resave(all.set, file = './abridged.RData')
 
 # For the entire dataset, calculate the weighted unifrac distances from the total sum scaled (TSS) data #
