@@ -1095,7 +1095,7 @@ resave(c.perm, file = './abridged.RData')
 c_beta.plot <- plot_ordination(c_prop.ps, c_ord.nmds.wuni, color="Treatment", title="C Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
-resave(c_beta.plot, './abridged.RData')
+resave(c_beta.plot, file = './abridged.RData')
 
 TukeyHSD(betadisper(c.dist, group = sample_data(c.ps)$Treats, type = 'median'))
 
@@ -1161,7 +1161,7 @@ resave(f.perm, file = './abridged.RData')
 f_beta.plot <- plot_ordination(f_prop.ps, f_ord.nmds.wuni, color="Treatment", title="F Samples NMDS") +
   theme_prism() +
   geom_point(size = 6)
-resave(f_beta.plot, file = 'abridged.RData', file = './abrdiged.RData')
+resave(f_beta.plot, file = './abridged.RData')
 
 TukeyHSD(betadisper(f.dist, group = sample_data(f.ps)$Treats, type = 'median'))
 
