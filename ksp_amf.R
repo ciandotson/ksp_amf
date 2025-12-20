@@ -264,8 +264,15 @@ decompose_ps <- function(ps, label){
   met.tab <- as(sample_data(ps), 'data.frame')
   if(!is.null(access(ps, "refseq"))){
     dna.tab <- refseq(ps)
+    fra.tab <- cbind(tax.tab, as.character(dna.tab),otu.tab)
+  } else {
+    fra.tab <- cbind(tax.tab, otu.tab)
   }
-  fra.tab <- cbind(tax.tab, otu.tab)
+  for(j in 1:ncol(fra.tab)){
+    if(colnames(fra.tab)[j] == "as.character(dna.tab)"){
+      colnames(fra.tab)[j] = "DNA Sequence"
+    }
+  }
   if(!is.null(access(ps, "refseq"))){
     decomposed = list(
     tax = tax.tab,
@@ -278,7 +285,8 @@ decompose_ps <- function(ps, label){
       tax = tax.tab,
       otu = otu.tab,
       met = met.tab,
-      fra = fra.tab) 
+      fra = fra.tab,
+      ) 
   }
   assign(label, decomposed, envir = .GlobalEnv)
   invisible(decomposed)
@@ -1023,9 +1031,15 @@ ksp.perm
 resave(ksp_by.perm, file = './abridged.RData')
 resave(ksp.perm, file = './abridged.RData')
 
-beta.plot<- plot_ordination(ksp_prop.ps, ord.nmds.wuni, shape = "Treats", color="Site", title="All Samples") +
+beta.plot<- plot_ordination(ksp_prop.ps, ksp_unif.pcoa, shape = "Treats", color="Site", title="All Samples") +
   theme_prism() +
-  geom_point(size = 6)
+  geom_point(size = 10) +
+  scale_x_continuous(name = "PCoA 1 (13.45%)") +
+  scale_y_continuous(name = "PCoA 2 (11.24%)") +
+  coord_cartesian(ylim = c(-0.3, 0.3)) +
+  annotate("richtext", x = 0.05, y = -0.29,
+           label = paste0("R<sup>2</sup> = ", round(ksp.perm$R2[1], 3), "; pseudo-<em>F</em><sub>24,48</sub> = ", round(ksp.perm$F[1], 3),'; <em>p</em> < 0.001'),
+           size = 10, fontface = 'bold', family = 'Liberation Sans')
   
 TukeyHSD(betadisper(ksp.bdist, group = final_ksp$met$Treats, type = 'median'))
 
@@ -2165,14 +2179,14 @@ library(ggrepel); packageVersion("ggrepel")
 if(!requireNamespace('ggtext')) install.packages('ggtext')
 library(ggtext); packageVersion('ggtext')
 
-high.volc <- ggplot(high_maas.res, aes(x = back, y = `-log10(qval)`, color = sigmyc, label = feats)) +
+high.volc <- ggplot(high_maas.res, aes(x = coef, y = `-log10(qval)`, color = sigmyc, label = feats)) +
   geom_hline(yintercept = -log(0.05, 10), col = 'gray', linewidth = unit(1, 'mm'), linetype = 'dashed') +
   geom_vline(xintercept = 0, col = 'gray', linewidth = unit(1,'mm'), linetype = 'dashed') +
   geom_point(size = 4) +
   scale_color_manual(labels = c('myc', 'not'), values = c('red', 'gray')) +
   theme_prism() +
   geom_label_repel(size = 5, family = "Liberation Sans", fontface = "bold", min.segment.length = unit(0, 'lines'), box.padding = unit(0.5, 'lines')) +
-  scale_x_continuous(name = 'log<sub>2</sub>-fold change', breaks = seq(-40,40,10), limits = c(-40, 41)) +
+  scale_x_continuous(name = 'log<sub>2</sub>-fold change', breaks = seq(-4,4,1), limits = c(-4, 4.1)) +
   scale_y_continuous(breaks = seq(0,3.5,0.5), expand = expansion(add = c(0,0)), limits = c(0,3.5)) +
   theme(legend.position = 'none',
         axis.title.x = ggtext::element_markdown(family = 'Liberation Sans', face = 'bold', vjust = 0.1, size = 24),
@@ -2180,22 +2194,20 @@ high.volc <- ggplot(high_maas.res, aes(x = back, y = `-log10(qval)`, color = sig
         axis.text.x = element_text(size = 14, family = 'Liberation Sans'),
         axis.text.y = element_text(size = 14, family = 'Liberation Sans'))
                     
-low.volc <- ggplot(low_maas.res, aes(x = back, y = `-log10(qval)`, color = sigmyc, label = feats)) +
+low.volc <- ggplot(low_maas.res, aes(x = coef, y = `-log10(qval)`, color = sigmyc, label = feats)) +
   geom_hline(yintercept = -log(0.05, 10), col = 'gray', linewidth = unit(1, 'mm'), linetype = 'dashed') +
   geom_vline(xintercept = 0, col = 'gray', linewidth = unit(1,'mm'), linetype = 'dashed') +
   geom_point(size = 4) +
   scale_color_manual(, values = c('gray', 'red')) +
   theme_prism() +
   geom_label_repel(size = 5, family = "Liberation Sans", fontface = "bold", min.segment.length = unit(0, 'lines'), box.padding = unit(0.5, 'lines')) +
-  scale_x_continuous(name = 'log<sub>2</sub>-fold change', breaks = seq(-20,20,10), limits = c(-21, 21)) +
+  scale_x_continuous(name = 'log<sub>2</sub>-fold change', breaks = seq(-4,4,1), limits = c(-4.1, 4.1)) +
   scale_y_continuous(breaks = seq(0,2,0.5), expand = expansion(add = c(0,0)), limits = c(0,2.1)) +
   theme(legend.position = 'none',
         axis.title.x = ggtext::element_markdown(family = 'Liberation Sans', face = 'bold', vjust = 0.1, size = 24),
         axis.title.y = ggtext::element_markdown(family = 'Liberation Sans', face = 'bold', vjust = 0.1, size = 24),
         axis.text.x = element_text(size = 14, family = 'Liberation Sans'),
         axis.text.y = element_text(size = 14, family = 'Liberation Sans'))
-
-save.image("./ksp_amf.RData")
 
 #### Correlation with Aboveground Diversity ####
 # Load in the aboveground diversity data #
@@ -2340,7 +2352,7 @@ beta.aov <- Anova(beta.fit, type = 2)
 
 beta.df$Di <- factor(beta.df$Di, levels = c('WSWT', 'WSAT', 'ASWT', 'ASAT'))
 
-beta_man.plot <- ggplot(beta.df, aes(x = Below, y = Above, color = Di)) +
+beta_man.plot <- ggplot(beta.df, aes(x = Below, y = Above)) +
   geom_abline(intercept = coef(beta.fit)[1],
               slope = coef(beta.fit)[2],
               color = 'black') +
@@ -2348,18 +2360,17 @@ beta_man.plot <- ggplot(beta.df, aes(x = Below, y = Above, color = Di)) +
   theme_prism() +
   scale_y_continuous(name = "Aboveground Biodiversity Dissimilarity (Bray-Curtis)", breaks = seq(0.2,1,0.2), limits = c(0.2,1)) +
   scale_x_continuous(name = "Belowground Biodiversity Dissimilarity (Bray-Curtis)", breaks = seq(0.2,1,0.2), limits = c(0.3,1)) +
-  scale_color_manual(name = "Site and Treatment Comparison", labels = c("Within Site, Within Treatment", "Within Site, Across Treatment", "Across Site, Within Treatment", "Across Site, Across Treatment"),values = c("#1F78B4","#FDBF6F","#6A3D9A", "#B15928")) +
   annotate("richtext", x = 0.65, y = 0.2,
            label = paste0("Mantel r = ", round(beta.man$statistic, 3), "; <em>p</em> = ", round(beta.man$signif, 3)),
            size = 14, fontface = 'bold', family = 'Liberation Sans') +
   theme(legend.text = element_text(size = 16, color = 'black', face = 'bold', family = 'Liberation Sans'),
         legend.title = element_text(size = 20, color = 'black', face = 'bold', family = 'Liberation Sans'),
         legend.key.spacing.y = unit(3, 'mm'),
-        legend.position = "inside",
-        legend.position.inside = c(0.15,0.8),
+        legend.position = "none",,
         axis.title = element_text(size = 20),
-        axis.text = element_text(size = 16),
-        legend.background = element_rect(color = 'black'))
+        axis.text = element_text(size = 16))
+
+save.image("./ksp_amf.RData")
 
 # This just outputs the final time in which the Rscript finishes running #
 cat("\n## Script finished at", Sys.time(), "\n")
